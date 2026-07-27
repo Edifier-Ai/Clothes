@@ -13,7 +13,7 @@
 |---|---|
 | Node | v24.18.0 |
 | pnpm | 11.17.0（`npm install -g pnpm`） |
-| JDK | Temurin 17.0.19，`C:\Users\Admin\tools\jdk-17.0.19+10`（用户级 zip，未装系统） |
+| JDK | 构建用 Temurin 17，`C:\Users\Admin\tools\jdk-17`（用户级 zip）；本机默认 `JAVA_HOME` 为 21，Gradle 9 二者皆可 |
 | Android SDK | `C:\Users\Admin\AppData\Local\Android\Sdk`（platforms 34/35/36，build-tools 34/36/37） |
 | 真机 | OnePlus LE2120，Android 14（API 34），arm64-v8a，1080×2412@480dpi |
 

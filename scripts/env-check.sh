@@ -7,7 +7,7 @@ FAIL=0
 note() { printf '%s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; FAIL=1; }
 
-JAVA_HOME_GUESS="/c/Users/Admin/tools/jdk-17.0.19+10"
+JAVA_HOME_GUESS="/c/Users/Admin/tools/jdk-17"
 SDK_GUESS="/c/Users/Admin/AppData/Local/Android/Sdk"
 
 note "== Clothes env-check =="

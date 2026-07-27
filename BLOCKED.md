@@ -1,33 +1,17 @@
 # BLOCKED
 
-## B-1 环境缺 pnpm / java / adb（原始输出，处理中）
+## B-1 环境工具缺失 —— 已解决（2026-07-27）
 
-2026-07-27 实测（Git Bash）：
+原始缺失输出（开工时）：`pnpm: command not found`、`java: command not found`、`adb: command not found`、`ANDROID_HOME=unset`。
+解决（用户级，无管理员）：pnpm 11.17.0（`npm i -g pnpm`）；JDK 经 Adoptium zip 解压至 `C:\Users\Admin\tools\jdk-17`（构建显式使用）；adb 直接用 SDK `platform-tools/adb.exe` 1.0.41；Gradle 经本机代理 `127.0.0.1:7890`（写入 `~/.gradle/gradle.properties` 的 systemProp + GRADLE_OPTS，因 Java 不读 Windows 系统代理）。env-check 退出码 0。
 
-```
-$ pnpm --version
-/usr/bin/bash: line 3: pnpm: command not found   (exit=127)
-$ java -version
-/usr/bin/bash: line 5: java: command not found   (exit=127)
-$ adb version
-/usr/bin/bash: line 6: adb: command not found    (exit=127)
-$ echo $ANDROID_HOME
-unset
-```
+## B-2 真机安装/启动 —— 已解决（骨架级）；完整闭环真机验收仍待业务卡
 
-可用项：`git` 2.x（根 `C:/Users/Admin/Desktop`）、`node v24.18.0`、`npm 11.16.0`、`corepack 0.35.0`、`winget`；网络可达 registry.npmjs.org 与 api.adoptium.net（HTTP 200）。
-磁盘实测：Android SDK 完整存在于 `C:/Users/Admin/AppData/Local/Android/Sdk`（platform-tools/adb.exe、emulator、platforms 34/35/36、build-tools 34/36/37、system-images android-35/36 google_apis x86_64、AVD：Elow_API_36、MiraTest、Real001API35）；全盘常见路径未找到任何 java.exe。
+真机 OnePlus LE2120 已连接并安装启动 `com.clothes.app`（见 `scripts/evidence/MVP-000/INDEX.md`）。
+设备策略限制（如实记录，非缺陷）：
+- OPlus 把 shell `pm install` 与 `adb install` 都重定向到 GUI 确认页，且拒绝 `WRITE_SETTINGS`/`WRITE_SECURE_SETTINGS`，故 adb 无法改 `font_scale`/关校验；安装经 `input tap` 自动点确认完成，1.3× 字体矩阵改在 AOSP 模拟器取证。
+- 真机对 MVP-000 骨架的「安装+启动+四标签切换+重启」已验收；**断网 12 件导入→抠图→推荐→替换→记录→重启→导出** 的完整真机闭环需待对应业务卡实现后再验，本卡不声称完成。
 
-处理路径（任务卡允许"项目内或用户级安装"）：
-1. pnpm → `npm install -g pnpm`（npm 前缀为用户级 `C:\Users\Admin\AppData\Roaming\npm`，无需管理员）。
-2. java → Adoptium Temurin 17 zip 解压至用户目录 `C:\Users\Admin\tools\jdk-17`，Gradle 经 `org.gradle.java.home` 指向，不动系统。
-3. adb → 直接使用 SDK 内绝对路径。
-每步结果记录于 `PROGRESS.md`；任一失败则在此升级为硬阻塞。
+## B-3 抠图真实照片基准 —— 未完成（待 MVP-002）
 
-## B-2 无真机连接，真机验收未完成
-
-`adb devices` 因 adb 不在 PATH 未能执行；安装后将在本条目补充输出。MVP-000 允许模拟器完成骨架，但完成条件要求"真实 Android 可安装启动"与抠图真图基准，真机/真图验收在连接设备前保持未完成。
-
-## B-3 抠图真实照片基准未开始
-
-MVP-002 需要 100–200 张真实衣物照片；当前无照片夹具。按 Goal 决策：用可公开复现夹具推进，真图验收标记未完成（待 MVP-002 激活时细化）。
+MVP-002 需 100–200 张真实衣物照片做端侧抠图基准；当前无照片夹具。按 Goal 决策以可公开复现夹具推进，真图验收标记未完成，激活 MVP-002 时细化夹具来源与阈值。
