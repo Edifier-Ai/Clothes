@@ -12,9 +12,13 @@
 - OPlus 把 shell `pm install` 与 `adb install` 都重定向到 GUI 确认页，且拒绝 `WRITE_SETTINGS`/`WRITE_SECURE_SETTINGS`，故 adb 无法改 `font_scale`/关校验；安装经 `input tap` 自动点确认完成，1.3× 字体矩阵改在 AOSP 模拟器取证。
 - 真机对 MVP-000 骨架的「安装+启动+四标签切换+重启」已验收；**断网 12 件导入→抠图→推荐→替换→记录→重启→导出** 的完整真机闭环需待对应业务卡实现后再验，本卡不声称完成。
 
-## B-3 抠图真实照片基准 —— 未完成（待 MVP-002）
+## B-3 / B-5 抠图真实照片基准 —— 管线就绪，真图缺，卡片 BLOCKED（2026-07-28）
 
-MVP-002 需 100–200 张真实衣物照片做端侧抠图基准；当前无照片夹具。按 Goal 决策以可公开复现夹具推进，真图验收标记未完成，激活 MVP-002 时细化夹具来源与阈值。
+MVP-002 需 100–200 张真实衣物照片；当前无真图。已交付可复跑基准管线（host tsx+pngjs：清单格式、
+私有样本目录、合成夹具生成、逐图结果+联系表+报告、校验脚本、红→绿反向验证）与 on-device 探针代码
+（onnxruntime-react-native，走文件/二进制），见 `scripts/evidence/MVP-002/INDEX.md`。
+因无真图，「直接可用率≥80%/严重失败≤5%」与默认/备用模型选择**不得**据此判定，MVP-002 保持 BLOCKED，
+不标最终验收。on-device 真机延迟待 `expo prebuild` 链接 onnxruntime-react-native + 真/转换模型后测。
 
 ## B-4 expo-sqlite 在本机提交不 fsync —— 已用文件镜像适配（2026-07-28）
 

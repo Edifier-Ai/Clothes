@@ -8,7 +8,10 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "android": "pnpm --filter @clothes/mobile run android",
-    "start": "pnpm --filter @clothes/mobile run start"
+    "start": "pnpm --filter @clothes/mobile run start",
+    "bench:fixtures": "tsx scripts/segmentation-benchmark/generateFixtures.ts",
+    "bench:run": "tsx scripts/segmentation-benchmark/runBenchmark.ts",
+    "bench:validate": "tsx scripts/segmentation-benchmark/validateReport.ts"
   },
   "engines": {
     "node": ">=20"

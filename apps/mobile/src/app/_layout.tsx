@@ -19,6 +19,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="add-garment" options={{ presentation: 'modal', headerShown: true, title: '' }} />
         <Stack.Screen name="garment/[id]" options={{ headerShown: true, title: '衣物' }} />
+        <Stack.Screen name="segmentation-benchmark" options={{ headerShown: true, title: '抠图探针' }} />
       </Stack>
       <StatusBar style="dark" />
     </>

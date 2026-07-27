@@ -34,3 +34,6 @@ Thumbs.db
 
 # Test & coverage artifacts
 coverage/
+
+# Segmentation benchmark private samples/results (not committed; reproducible)
+scripts/segmentation-benchmark/.private/

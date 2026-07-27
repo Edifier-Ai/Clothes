@@ -1,7 +1,7 @@
 # PROGRESS
 
-状态：MVP-001 ACCEPTED；MVP-002 IN_PROGRESS  
-当前任务：MVP-002  
+状态：MVP-002 BLOCKED（无真图，管线/探针就绪）；MVP-003 IN_PROGRESS  
+当前任务：MVP-003  
 最后更新：2026-07-28
 
 ## 开工回执（MVP-000/001）
@@ -26,8 +26,15 @@
 - typecheck0；test 37/37/0；lint 0err。
 - 真机：FinalEdited 跨 force-stop 重启存活；RED 无孤儿/无半条。
 
-## 下一步（MVP-002）
+## MVP-002（BLOCKED 无真图；管线/探针就绪）
 
-- 读 `tasks/backlog/MVP-002-segmentation-benchmark.md`。
-- 端侧抠图基准：选模型（U²-Net-p 基线 / IS-Net 候选），100–200 真图或可复现夹具，
-  测直接可用率/严重失败率/单张耗时/连续12张不闪退；未达标保留双档。真图缺则 BLOCKED 标注。
+- 可复跑 host 基准管线（tsx+pngjs）：清单格式+私有样本目录+合成夹具+逐图+联系表+报告+校验脚本。
+- 反向验证：注入损坏图→validate exit3；重建清单→OK。
+- on-device 探针 onnxruntime-react-native 集成+基准页（走文件/二进制）；真机延迟待重编+真模型。
+- 真图缺→「≥80%/≤5%」与默认模型选择不得判定，卡片 BLOCKED（B-3/B-5）。
+
+## 下一步（MVP-003）
+
+- 读 `tasks/backlog/MVP-003-batch-cutout-editor.md`。
+- 批量抠图队列（SQLite 持久+中断恢复）+ 审核/修边 Skia 画布 + 原图不覆盖；
+  用可替换 SegmentationEngine（先 stub，真模型由 MVP-002 解锁后注入）。
