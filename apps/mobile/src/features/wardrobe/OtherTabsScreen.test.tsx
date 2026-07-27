@@ -19,10 +19,10 @@ jest.mock('expo-image', () => ({ Image: () => null }));
 // 外壳渲染测试不触真实 DB（expo-sqlite 为原生模块，jest 无原生层）；
 // DAO/迁移/事务的真实行为由 src/core/db 的 better-sqlite3 测试覆盖。
 jest.mock('@/core/garments/service', () => ({
-  listGarments: () => [],
-  getGarmentDetail: () => null,
-  editGarment: () => true,
-  deleteGarment: () => true,
+  listGarments: () => Promise.resolve([]),
+  getGarmentDetail: () => Promise.resolve(null),
+  editGarment: () => Promise.resolve(true),
+  deleteGarment: () => Promise.resolve(true),
   assetExists: () => Promise.resolve(true),
 }));
 

@@ -9,13 +9,16 @@
  */
 
 export interface MigrationAdapter {
-  /** 执行可含多条语句的 SQL（PRAGMA / CREATE / BEGIN 等）。 */
-  exec(sql: string): void;
+  /** 执行可含多条语句的 SQL（PRAGMA / CREATE / BEGIN 等）。返回 Promise 以兼容异步后端。 */
+  exec(sql: string): Promise<void> | void;
 }
 
 export interface MigrationOptions {
-  /** 设备置 true 启用 WAL；sql.js 等不支持 WAL 的后端置 false。 */
-  wal?: boolean;
+  /**
+   * 日志模式。默认 DELETE（同步落主库）：保证提交后即使进程被强杀也不丢数据，
+   * 满足「数据不丢」最高优先级。WAL 在强杀且未 checkpoint 时会丢最近写入，故不采用。
+   */
+  journalMode?: 'DELETE' | 'TRUNCATE' | 'WAL';
 }
 
 export interface MigrationSql {
@@ -73,43 +76,54 @@ const META_DDL = `CREATE TABLE IF NOT EXISTS __clothes_meta (key TEXT PRIMARY KE
 
 export interface QueryableMigrationAdapter extends MigrationAdapter {
   /** 返回单列整数值，无行时返回 null。 */
-  scalarInt(sql: string): number | null;
+  scalarInt(sql: string): Promise<number | null> | number | null;
   /** 读取整型 PRAGMA（各后端用原生接口，避免 prepare 不支持 PRAGMA 的差异）。 */
-  pragmaInt(name: string): number | null;
+  pragmaInt(name: string): Promise<number | null> | number | null;
 }
 
-export function runMigrations(
+export async function runMigrations(
   adapter: QueryableMigrationAdapter,
   options: MigrationOptions = {},
-): { from: number; to: number } {
-  if (options.wal) {
-    adapter.exec('PRAGMA journal_mode=WAL;');
+): Promise<{ from: number; to: number }> {
+  const mode = options.journalMode ?? 'DELETE';
+  // journal_mode 必须在事务外设置；DELETE/TRUNCATE 保证强杀不丢已提交数据。
+  try {
+    await adapter.exec(`PRAGMA journal_mode=${mode};`);
+  } catch {
+    /* 后端不支持则忽略（如 sql.js） */
+  }
+  // synchronous=FULL：每次提交 fsync 落盘，进程被强杀/断电也不丢已提交写入
+  // （满足「数据不丢」最高优先级；本机实测默认 synchronous 在强杀下会丢最近写入）。
+  try {
+    await adapter.exec('PRAGMA synchronous=FULL;');
+  } catch {
+    /* ignore */
   }
   // foreign_keys 必须在事务外设置。
-  adapter.exec('PRAGMA foreign_keys=ON;');
-  adapter.exec(META_DDL);
+  await adapter.exec('PRAGMA foreign_keys=ON;');
+  await adapter.exec(META_DDL);
 
-  const from = adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'") ?? 0;
+  const from = (await adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'")) ?? 0;
   const pending = MIGRATIONS.filter((m) => m.version > from);
   if (pending.length === 0) return { from, to: from };
 
   for (const m of pending) {
-    adapter.exec('BEGIN;');
+    await adapter.exec('BEGIN;');
     try {
-      adapter.exec(m.sql);
-      adapter.exec(
+      await adapter.exec(m.sql);
+      await adapter.exec(
         `INSERT INTO __clothes_meta(key,value) VALUES('schema_version',${m.version}) ` +
           `ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
       );
-      adapter.exec('COMMIT;');
+      await adapter.exec('COMMIT;');
     } catch (err) {
       try {
-        adapter.exec('ROLLBACK;');
+        await adapter.exec('ROLLBACK;');
       } catch {
         /* 已在回滚态则忽略 */
       }
       throw err;
     }
   }
-  return { from, to: pending[pending.length - 1].version };
+  return { from, to: pending.length ? pending[pending.length - 1].version : from };
 }

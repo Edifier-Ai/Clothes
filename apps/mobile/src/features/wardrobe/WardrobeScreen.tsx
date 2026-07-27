@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { FlashList } from '@shopify/flash-list';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
-import { palette, radius, spacing, typography } from '@/design-system';
+import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { originalUri } from '@/core/files/uri';
 import { listGarments } from '@/core/garments/service';
 import type { GarmentRow } from '@/core/db/schema';
@@ -28,12 +28,24 @@ export default function WardrobeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setItems(listGarments());
+      listGarments().then(setItems);
     }, []),
   );
 
   return (
-    <TabShell title="衣橱" subtitle={`${items.length} 件衣物`}>
+    <TabShell
+      title="衣橱"
+      subtitle={`${items.length} 件衣物`}
+      trailing={
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push('/add-garment')}
+          style={styles.addBtn}
+        >
+          <Text style={styles.addBtnLabel}>+ 添加</Text>
+        </Pressable>
+      }
+    >
       {items.length === 0 ? (
         <EmptyStateCard
           eyebrow="02"
@@ -68,6 +80,15 @@ export default function WardrobeScreen() {
 }
 
 const styles = StyleSheet.create({
+  addBtn: {
+    minHeight: hitTarget.min,
+    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    backgroundColor: palette.oxblood,
+    marginLeft: spacing.sm,
+  },
+  addBtnLabel: { ...typography.bodySm, color: palette.white },
   grid: { padding: spacing.sm },
   card: {
     flex: 1,

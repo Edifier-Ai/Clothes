@@ -63,15 +63,16 @@ export default function GarmentDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!id) return;
-      const d = getGarmentDetail(id);
-      if (!d) {
-        setView({ detail: null, exists: true, form: null, editing: false });
-        return;
-      }
-      setView({ detail: d, exists: true, form: detailToForm(d), editing: false });
-      assetExists(d).then((ex) =>
-        setView((v) => (v.detail === d ? { ...v, exists: ex } : v)),
-      );
+      getGarmentDetail(id).then((d) => {
+        if (!d) {
+          setView({ detail: null, exists: true, form: null, editing: false });
+          return;
+        }
+        setView({ detail: d, exists: true, form: detailToForm(d), editing: false });
+        assetExists(d).then((ex) =>
+          setView((v) => (v.detail === d ? { ...v, exists: ex } : v)),
+        );
+      });
     }, [id]),
   );
 
@@ -97,18 +98,19 @@ export default function GarmentDetailScreen() {
         ...(form.occasion ? [{ kind: 'occasion' as const, value: form.occasion, confidence: 1 }] : []),
       ],
     });
-    const d = getGarmentDetail(id);
+    const d = await getGarmentDetail(id);
     setBusy(false);
     if (d) setView({ detail: d, exists: true, form: detailToForm(d), editing: false });
   };
 
-  const remove = () => {
+  const remove = async () => {
     if (!id) return;
-    deleteGarment(id);
+    await deleteGarment(id);
     router.back();
   };
 
   return (
+    <View style={styles.root}>
     <ScrollView contentContainerStyle={styles.container}>
       {exists ? (
         <Image source={{ uri: originalUri(detail.asset.originalRelPath) }} style={styles.hero} contentFit="contain" />
@@ -166,7 +168,9 @@ export default function GarmentDetailScreen() {
           ) : null}
         </>
       )}
+    </ScrollView>
 
+    <View style={styles.footer}>
       <View style={styles.actions}>
         {view.editing ? (
           <>
@@ -188,12 +192,15 @@ export default function GarmentDetailScreen() {
           </>
         )}
       </View>
-    </ScrollView>
+    </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: spacing.lg, paddingBottom: spacing.xxl, backgroundColor: palette.paperWhite },
+  root: { flex: 1, backgroundColor: palette.paperWhite },
+  container: { padding: spacing.lg, paddingBottom: spacing.md, backgroundColor: palette.paperWhite },
+  footer: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg, backgroundColor: palette.paperWhite, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.hairline },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.paperWhite },
   hero: { width: '100%', height: 320, borderRadius: radius.lg, backgroundColor: palette.sandSoft },
   heroMissing: { justifyContent: 'center', alignItems: 'center' },

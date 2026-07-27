@@ -106,6 +106,7 @@ export default function AddGarmentScreen() {
   }, [staged, picked, duplicate, form, router]);
 
   return (
+    <View style={styles.root}>
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>添加衣物</Text>
 
@@ -145,9 +146,10 @@ export default function AddGarmentScreen() {
       <Field label="颜色（可选）" value={form.color ?? ''} onChangeText={(v) => setForm({ ...form, color: v })} />
       <Field label="季节（可选）" value={form.season ?? ''} onChangeText={(v) => setForm({ ...form, season: v })} />
       <Field label="场景（可选）" value={form.occasion ?? ''} onChangeText={(v) => setForm({ ...form, occasion: v })} />
+    </ScrollView>
 
+    <View style={styles.footer}>
       {error ? <Text style={styles.error}>{error}</Text> : null}
-
       <Pressable
         accessibilityRole="button"
         disabled={!picked || busy}
@@ -164,7 +166,8 @@ export default function AddGarmentScreen() {
           <Text style={styles.saveLabel}>保存衣物</Text>
         )}
       </Pressable>
-    </ScrollView>
+    </View>
+    </View>
   );
 }
 
@@ -191,7 +194,9 @@ function Field({
 }
 
 const styles = StyleSheet.create({
-  container: { padding: spacing.lg, paddingBottom: spacing.xxl, backgroundColor: palette.paperWhite },
+  root: { flex: 1, backgroundColor: palette.paperWhite },
+  container: { padding: spacing.lg, paddingBottom: spacing.md, backgroundColor: palette.paperWhite },
+  footer: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg, backgroundColor: palette.paperWhite, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.hairline },
   title: { ...typography.title, color: palette.charcoal, marginBottom: spacing.md },
   dropzone: {
     height: 200,
