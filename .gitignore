@@ -1,0 +1,36 @@
+# Node
+node_modules/
+.pnpm-store/
+*.log
+npm-debug.log*
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/dist/
+apps/mobile/web-build/
+.expo/
+
+# Native builds (CNG prebuild outputs)
+apps/mobile/android/
+apps/mobile/ios/
+
+# Android local
+local.properties
+*.keystore
+!debug.keystore
+.gradle/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Test & coverage artifacts
+coverage/
