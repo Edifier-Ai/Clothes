@@ -1,0 +1,16 @@
+{
+  "name": "clothes",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "android": "pnpm --filter @clothes/mobile run android",
+    "start": "pnpm --filter @clothes/mobile run start"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

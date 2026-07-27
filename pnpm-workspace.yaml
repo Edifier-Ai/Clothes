@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+# pnpm 11 起配置写在 workspace 文件；hoisted 让 Metro/Jest/Gradle 按经典
+# 扁平 node_modules 解析（RN 生态最稳路径）。
+nodeLinker: hoisted
+allowBuilds:
+  unrs-resolver: true
