@@ -27,7 +27,7 @@ export interface MigrationSql {
 }
 
 /** 当前最新 schema 版本；新增迁移追加到 MIGRATIONS 末尾，version 递增。 */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const MIGRATIONS: readonly MigrationSql[] = [
   {
@@ -68,6 +68,41 @@ CREATE TABLE garment_tags (
   confidence REAL NOT NULL DEFAULT 1
 );
 CREATE INDEX garment_tags_garment_kind_idx ON garment_tags (garment_id, kind);
+`,
+  },
+  {
+    version: 2,
+    sql: `
+CREATE TABLE cutout_jobs (
+  id TEXT PRIMARY KEY NOT NULL,
+  garment_id TEXT NOT NULL REFERENCES garments(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT,
+  error_message TEXT,
+  source_staged_path TEXT,
+  original_rel_path TEXT,
+  mask_rel_path TEXT,
+  preview_rel_path TEXT,
+  thumbnail_rel_path TEXT,
+  width INTEGER,
+  height INTEGER,
+  sha256 TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX cutout_jobs_status_idx ON cutout_jobs (status, created_at);
+CREATE INDEX cutout_jobs_garment_idx ON cutout_jobs (garment_id);
+CREATE TABLE mask_strokes (
+  id TEXT PRIMARY KEY NOT NULL,
+  garment_id TEXT NOT NULL REFERENCES garments(id) ON DELETE CASCADE,
+  op TEXT NOT NULL,
+  points_json TEXT NOT NULL,
+  brush_size REAL NOT NULL,
+  ord INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX mask_strokes_garment_ord_idx ON mask_strokes (garment_id, ord);
 `,
   },
 ] as const;

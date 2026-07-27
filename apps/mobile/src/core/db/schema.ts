@@ -69,6 +69,56 @@ export const garmentTags = sqliteTable(
   }),
 );
 
+/** 抠图任务持久队列（MVP-003）。状态机：pending→running→succeeded/failed/cancelled。 */
+export const cutoutJobs = sqliteTable(
+  'cutout_jobs',
+  {
+    id: text('id').primaryKey(),
+    garmentId: text('garment_id')
+      .notNull()
+      .references(() => garments.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(), // pending|running|succeeded|failed|cancelled
+    attempts: integer('attempts').notNull().default(0),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    /** 源图暂存路径（处理成功后清空） */
+    sourceStagedPath: text('source_staged_path'),
+    originalRelPath: text('original_rel_path'),
+    maskRelPath: text('mask_rel_path'),
+    previewRelPath: text('preview_rel_path'),
+    thumbnailRelPath: text('thumbnail_rel_path'),
+    width: integer('width'),
+    height: integer('height'),
+    sha256: text('sha256'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => ({
+    statusIdx: index('cutout_jobs_status_idx').on(t.status, t.createdAt),
+    garmentIdx: index('cutout_jobs_garment_idx').on(t.garmentId),
+  }),
+);
+
+/** 修边操作栈（MVP-003）：可序列化、可重建蒙版、支持撤销/重做。 */
+export const maskStrokes = sqliteTable(
+  'mask_strokes',
+  {
+    id: text('id').primaryKey(),
+    garmentId: text('garment_id')
+      .notNull()
+      .references(() => garments.id, { onDelete: 'cascade' }),
+    op: text('op').notNull(), // erase | restore
+    /** JSON: number[] 归一化点 [x0,y0,x1,y1,...] 0..1 */
+    pointsJson: text('points_json').notNull(),
+    brushSize: real('brush_size').notNull(),
+    ord: integer('ord').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => ({
+    garmentOrdIdx: index('mask_strokes_garment_ord_idx').on(t.garmentId, t.ord),
+  }),
+);
+
 export type GarmentRow = typeof garments.$inferSelect;
 export type GarmentAssetRow = typeof garmentAssets.$inferSelect;
 export type GarmentTagRow = typeof garmentTags.$inferSelect;
@@ -86,3 +136,6 @@ export type GarmentStatus = 'clean' | 'worn' | 'laundry' | 'dryclean' | 'loaned'
 
 export const TAG_KINDS = ['color', 'season', 'occasion', 'material', 'formality'] as const;
 export type TagKind = (typeof TAG_KINDS)[number];
+
+export type CutoutJobRow = typeof cutoutJobs.$inferSelect;
+export type MaskStrokeRow = typeof maskStrokes.$inferSelect;
