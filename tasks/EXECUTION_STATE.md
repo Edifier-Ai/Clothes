@@ -2,8 +2,8 @@
 
 最后更新：2026-07-28  
 当前阶段：P0  
-当前任务：MVP-003  
-状态：IN_PROGRESS（MVP-002 因无真图 BLOCKED，见 B-3/B-5；其管线/探针已就绪）
+当前任务：MVP-004  
+状态：IN_PROGRESS（MVP-002 真图缺 BLOCKED；MVP-003 代码完整、设备验证因 Skia 不 autolink BLOCKED，见 B-3/B-5/B-6）
 
 ## 状态枚举
 
@@ -46,9 +46,22 @@
 
 证据目录：`scripts/evidence/MVP-001/INDEX.md`
 
+## MVP-003 结果（代码完整；设备验证 BLOCKED 见 B-6）
+
+| 检查 | 结果 |
+|---|---|
+| schema v2 | cutout_jobs 状态机 + mask_strokes 操作栈 |
+| 队列+处理器 | 幂等入队/顺序drain/recover/重试/跳过/进度快照，host 测试覆盖 |
+| 管线 | 原子 tmp→commit、原图不覆盖、派生图可重建，host 测试覆盖 |
+| 引擎 | 可替换 SegmentationEngine（stub；ONNX 待 MVP-002 注入） |
+| 镜像 v2 | 含队列+操作栈，跨强杀恢复 |
+| UI | batch-import(IMP-02) + cutout-editor(IMP-03/04: Skia+PanResponder 平移/缩放/笔刷/撤销/保存) |
+| 质量门 | typecheck0 / lint0err / test 52/52/0 |
+| 设备验证 | **阻塞**：Skia v2.10 不 autolink（B-6），bundle 含 Skia 启动崩；待兼容版本/补 plugin |
+
 ## P0 顺序
 
-`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003 → 004 → 005 → 006 → 007 → 008 → 009 → 010 → 011 → 012 → 013 → 014`
+`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003(代码✓/设备BLOCKED) → 004 → 005 → 006 → 007 → 008 → 009 → 010 → 011 → 012 → 013 → 014`
 
 不得跳过依赖。任务被外部输入阻塞时，可做与其无依赖且不会造成返工的文档、测试夹具或下一卡预研，但不能把下一卡标为 `IN_PROGRESS`。
 

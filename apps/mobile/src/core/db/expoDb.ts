@@ -25,6 +25,8 @@ const DB_NAME = 'clothes.db';
 export interface AppDb {
   db: GarmentDb;
   raw: SQLiteDatabase;
+  /** drizzle 实例（队列/管线等需要直接表访问的模块使用） */
+  drizzleDb: ExpoSQLiteDatabase<typeof schema>;
   /** 写操作后调用：关闭+重开连接，强制落盘。 */
   flush: () => Promise<void>;
   close: () => Promise<void>;
@@ -163,9 +165,11 @@ async function build(): Promise<AppDb> {
     },
   };
   await runMigrations(adapter, { journalMode: 'DELETE' });
+  const drizzleDb = drizzle(raw, { schema });
   return {
     db: buildGarmentDb(raw),
     raw,
+    drizzleDb,
     flush: flushDb,
     close: async () => {
       await raw.closeAsync();

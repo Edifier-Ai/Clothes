@@ -18,6 +18,8 @@ export default function RootLayout() {
       >
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="add-garment" options={{ presentation: 'modal', headerShown: true, title: '' }} />
+        <Stack.Screen name="batch-import" options={{ headerShown: true, title: '批量导入' }} />
+        <Stack.Screen name="cutout-editor" options={{ headerShown: true, title: '修边' }} />
         <Stack.Screen name="garment/[id]" options={{ headerShown: true, title: '衣物' }} />
         <Stack.Screen name="segmentation-benchmark" options={{ headerShown: true, title: '抠图探针' }} />
       </Stack>

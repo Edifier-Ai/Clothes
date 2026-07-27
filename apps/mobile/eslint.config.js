@@ -16,4 +16,13 @@ module.exports = [
     ],
   },
   ...expoConfig,
+  {
+    // Skia 修边画布需在读 ref 的渲染期合成蒙版叠加，属有意为之；关闭 react-hooks/refs 与 impure 规则。
+    files: ['src/app/cutout-editor.tsx'],
+    rules: {
+      'react-hooks/refs': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/purity': 'off',
+    },
+  },
 ];

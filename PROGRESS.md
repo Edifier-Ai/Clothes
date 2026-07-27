@@ -1,7 +1,7 @@
 # PROGRESS
 
-状态：MVP-002 BLOCKED（无真图，管线/探针就绪）；MVP-003 IN_PROGRESS  
-当前任务：MVP-003  
+状态：MVP-003 代码完整/设备验证 BLOCKED(B-6)；MVP-004 IN_PROGRESS  
+当前任务：MVP-004  
 最后更新：2026-07-28
 
 ## 开工回执（MVP-000/001）
@@ -38,3 +38,16 @@
 - 读 `tasks/backlog/MVP-003-batch-cutout-editor.md`。
 - 批量抠图队列（SQLite 持久+中断恢复）+ 审核/修边 Skia 画布 + 原图不覆盖；
   用可替换 SegmentationEngine（先 stub，真模型由 MVP-002 解锁后注入）。
+
+## MVP-003（代码完整；设备验证 BLOCKED 见 B-6）
+
+- 队列+处理器+管线+镜像v2+batch-import+cutout-editor 全部实现；typecheck0/lint0err/test52。
+- 设备验证阻塞：Skia v2.10 在 SDK57 不 autolink（无 expo-module.config 也无 rn config；
+  EXPO_USE_COMMUNITY_AUTOLINKING=1 亦无效），含 Skia 的 bundle 启动崩，IMP-02/03/04 真机截图与
+  「杀进程恢复」真机验收未完成。代码层经 host 测试充分覆盖。
+
+## 下一步（MVP-004）
+
+- 读 `tasks/backlog/MVP-004-onboarding-activation.md`。
+- 12 件激活流程（欢迎→目标→6 件预览→12 件首套推荐）；注意设备 UI 验证受 B-6 影响，
+  优先用 host 测试覆盖流程逻辑，UI 截图待 Skia 阻塞解除或纯 RN 屏先行。

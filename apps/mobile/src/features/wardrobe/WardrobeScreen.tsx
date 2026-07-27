@@ -39,7 +39,7 @@ export default function WardrobeScreen() {
       trailing={
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.push('/add-garment')}
+          onPress={() => router.push('/batch-import')}
           style={styles.addBtn}
         >
           <Text style={styles.addBtnLabel}>+ 添加</Text>
@@ -52,7 +52,7 @@ export default function WardrobeScreen() {
           title="衣橱还是空的"
           description="从相册导入或连续拍摄你的真实衣物。每件衣物保留原图、蒙版和缩略图，随时可以重新修边。"
           actionLabel="添加衣物"
-          onAction={() => router.push('/add-garment')}
+          onAction={() => router.push('/batch-import')}
         />
       ) : (
         <FlashList

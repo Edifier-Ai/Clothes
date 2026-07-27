@@ -42,7 +42,7 @@ function db(): Promise<AppDb> {
     const opened = openAppDb();
     // 首次开库后从持久镜像回灌（补齐本机 expo-sqlite 不落盘）。
     restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db))
+      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
       .then(() => undefined);
     dbHolder = opened;
   }
@@ -61,7 +61,7 @@ async function readyDb(): Promise<AppDb> {
  *  拿到 closed resource；且本机会话内 in-memory 数据已可查询，跨重启由镜像回灌保证。 */
 async function persist(): Promise<void> {
   const app = await db();
-  await writeMirror(root(), app.db, Date.now());
+  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
 }
 
 function root(): string {
