@@ -15,7 +15,11 @@ export default function RootLayout() {
           headerShown: false,
           contentStyle: { backgroundColor: palette.paperWhite },
         }}
-      />
+      >
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="add-garment" options={{ presentation: 'modal', headerShown: true, title: '' }} />
+        <Stack.Screen name="garment/[id]" options={{ headerShown: true, title: '衣物' }} />
+      </Stack>
       <StatusBar style="dark" />
     </>
   );
