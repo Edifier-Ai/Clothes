@@ -114,6 +114,9 @@ export interface QueryableMigrationAdapter extends MigrationAdapter {
   scalarInt(sql: string): Promise<number | null> | number | null;
   /** 读取整型 PRAGMA（各后端用原生接口，避免 prepare 不支持 PRAGMA 的差异）。 */
   pragmaInt(name: string): Promise<number | null> | number | null;
+  /** 字符串元数据读写（onboarding 进度等）。 */
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
 }
 
 export async function runMigrations(

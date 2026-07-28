@@ -84,6 +84,8 @@ export interface GarmentDbOps {
   deleteAllGarments(): Promise<void>;
   getMetaInt(key: string): Promise<number | null>;
   setMetaInt(key: string, value: number): Promise<void>;
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
 }
 
 export interface GarmentDb extends GarmentDbOps {

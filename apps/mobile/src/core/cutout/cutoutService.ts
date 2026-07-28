@@ -1,8 +1,9 @@
+import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { AppDb } from '../db/expoDb';
 import { openAppDb } from '../db/expoDb';
-import { garments } from '../db/schema';
+import { garmentAssets, garments } from '../db/schema';
 import { enqueue } from '../db/queue';
 import { StubSegmentationEngine } from '../../native/segmentationEngine';
 import { devicePixelReader } from './devicePixelReader';
@@ -68,6 +69,55 @@ export async function enqueueBatch(app: AppDb, picked: PickedForBatch[]): Promis
   }
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
   return { garmentIds, jobIds };
+}
+
+/**
+ * Onboarding 用：录入原图 + sha256，**不**生成蒙版/抠图（cutout 在设备 B-6 阻塞）。
+ * 衣物以「待处理蒙版」状态入库，满足 12 件激活；蒙版可后续在 MVP-003 管线解锁后补。
+ * 原图只读复制，绝不覆盖；sha256 由 expo-crypto 计算（非 Base64 入库）。
+ */
+export async function addOriginalOnly(
+  app: AppDb,
+  picked: { uri: string; ext: string; name?: string; category?: string },
+): Promise<string> {
+  await ensureDirs();
+  const now = Date.now();
+  const gid = uuidv7();
+  const ext = picked.ext.replace(/^\./, '');
+  const rel = `originals/${gid}.${ext}`;
+  const abs = `${rootAbs()}/${rel}`;
+  // 原图只读复制；目标不存在才写
+  const info = await FileSystem.getInfoAsync(abs);
+  if (!info.exists) await FileSystem.copyAsync({ from: picked.uri, to: abs });
+  const b64 = await FileSystem.readAsStringAsync(abs, { encoding: FileSystem.EncodingType.Base64 });
+  const sha256 = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, b64);
+  const dim = await FileSystem.getInfoAsync(abs);
+  await app.drizzleDb.insert(garments).values({
+    id: gid,
+    name: picked.name ?? `衣物`,
+    category: picked.category ?? 'top',
+    status: 'clean',
+    priceMinor: null,
+    currency: null,
+    purchaseDate: null,
+    archivedAt: null,
+    deletedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await app.drizzleDb.insert(garmentAssets).values({
+    id: uuidv7(),
+    garmentId: gid,
+    originalRelPath: rel,
+    sha256,
+    width: 0, // 未知（无解码器；不伪造）
+    height: 0,
+    bytes: dim.exists && 'size' in dim ? (dim.size ?? 0) : 0,
+    mimeType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+    createdAt: now,
+  });
+  await writeMirror(rootAbs(), app.db, app.drizzleDb, now);
+  return gid;
 }
 
 /** 启动顺序处理（并发 1）；启动先 recover 中断任务。每张完成写镜像。 */

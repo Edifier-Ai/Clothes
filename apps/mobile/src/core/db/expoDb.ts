@@ -129,6 +129,16 @@ function opsOf(d: ExpoSQLiteDatabase<typeof schema>, raw: SQLiteDatabase): Garme
       );
       return Promise.resolve();
     },
+    getMeta: async (key) => {
+      const row = raw.getFirstSync<Record<string, unknown>>(`SELECT value FROM __clothes_meta WHERE key='${key}'`);
+      return row?.value == null ? null : String(row.value);
+    },
+    setMeta: async (key, value) => {
+      const esc = value.replace(/'/g, "''");
+      raw.execSync(
+        `INSERT INTO __clothes_meta(key,value) VALUES('${key}','${esc}') ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
+      );
+    },
   };
 }
 
@@ -162,6 +172,18 @@ async function build(): Promise<AppDb> {
       if (!row) return null;
       const v = Object.values(row)[0];
       return v == null ? null : Number(v);
+    },
+    getMeta: async (key) => {
+      const row = (await raw.getFirstAsync<Record<string, unknown>>(
+        `SELECT value FROM __clothes_meta WHERE key='${key}'`,
+      )) as { value?: string | null } | null;
+      return row?.value == null ? null : String(row.value);
+    },
+    setMeta: async (key, value) => {
+      const esc = value.replace(/'/g, "''");
+      await raw.execAsync(
+        `INSERT INTO __clothes_meta(key,value) VALUES('${key}','${esc}') ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
+      );
     },
   };
   await runMigrations(adapter, { journalMode: 'DELETE' });

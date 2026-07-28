@@ -40,6 +40,18 @@ function wrap(raw: DatabaseT): QueryableMigrationAdapter {
       const v = raw.pragma(name, { simple: true });
       return v == null ? null : Number(v);
     },
+    getMeta: (key) => {
+      const row = raw.prepare(`SELECT value AS v FROM __clothes_meta WHERE key=?`).get(key) as
+        | { v?: string | null }
+        | undefined;
+      return Promise.resolve(row?.v == null ? null : String(row.v));
+    },
+    setMeta: (key, value) => {
+      raw
+        .prepare(`INSERT INTO __clothes_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+        .run(key, value);
+      return Promise.resolve();
+    },
   };
 }
 
@@ -132,10 +144,24 @@ function opsOf(d: BetterSQLite3Database<typeof schema>, raw: DatabaseT): Garment
         .run(key, value);
       return Promise.resolve();
     },
+    getMeta: (key) => {
+      const row = raw.prepare(`SELECT value AS v FROM __clothes_meta WHERE key=?`).get(key) as
+        | { v?: string | null }
+        | undefined;
+      return Promise.resolve(row?.v == null ? null : String(row.v));
+    },
+    setMeta: (key, value) => {
+      raw
+        .prepare(
+          `INSERT INTO __clothes_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+        )
+        .run(key, value);
+      return Promise.resolve();
+    },
   };
 }
 
-function buildGarmentDb(raw: DatabaseT): GarmentDb {
+export function buildGarmentDb(raw: DatabaseT): GarmentDb {
   const d = drizzle(raw, { schema });
   const outer = opsOf(d, raw);
   return {

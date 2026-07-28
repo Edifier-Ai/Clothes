@@ -4,44 +4,32 @@
 import Database from 'better-sqlite3';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 
+import type { GarmentDb } from './dao';
 import * as schema from './schema';
-import { runMigrations, type QueryableMigrationAdapter } from './migrations';
+import { buildGarmentDb } from './sqliteTestHelper';
 
 export interface QueueTestDb {
   raw: Database.Database;
+  /** drizzle 实例：供 queue/processor 等直接表访问的函数与 seed 使用。 */
   db: BetterSQLite3Database<typeof schema>;
+  /** GarmentDb 抽象：供 onboarding 等通过 GarmentDb 接口的函数使用。 */
+  garmentDb: GarmentDb;
   close: () => void;
 }
 
 export function openQueueTestDb(): QueueTestDb {
   const raw = new Database(':memory:');
-  const adapter: QueryableMigrationAdapter = {
-    exec: (sql) => {
-      raw.exec(sql);
-    },
-    scalarInt: (sql) => {
-      const row = raw.prepare(sql).get() as Record<string, unknown> | undefined;
-      if (!row) return null;
-      const v = Object.values(row)[0];
-      return v == null ? null : Number(v);
-    },
-    pragmaInt: (name) => {
-      const v = raw.pragma(name, { simple: true });
-      return v == null ? null : Number(v);
-    },
-  };
-  // runMigrations 为 async；内存库同步执行：用 then 在微任务前不行，故此处同步跑 SQL。
-  // 直接执行 v1+v2 的 SQL（与 migrations.ts 同源）以保证测试同步可用。
+  // runMigrations 为 async；内存库同步执行：直接执行 v1+v2 的 SQL（与 migrations.ts 同源）。
   raw.exec('PRAGMA foreign_keys=ON;');
+  raw.exec('CREATE TABLE IF NOT EXISTS __clothes_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { MIGRATIONS } = require('./migrations') as { MIGRATIONS: { sql: string }[] };
   for (const m of MIGRATIONS) raw.exec(m.sql);
-  void runMigrations;
-  void adapter;
   const db = drizzle(raw, { schema });
   return {
     raw,
     db,
+    garmentDb: buildGarmentDb(raw),
     close: () => raw.close(),
   };
 }
