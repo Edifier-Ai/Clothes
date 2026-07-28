@@ -14,4 +14,17 @@ config.resolver.nodeModulesPaths = [
   path.resolve(monorepoRoot, 'node_modules'),
 ];
 
+// pngjs 依赖 Node builtins，RN-native 无法打包。native 平台把 `pngjs` 重定向到桩，
+// 使主 bundle 不遍历 pngjs 的 Node 依赖，app 方可启动（抠图链路设备本就 B-6 阻塞）。
+// jest/web 不经此 resolver，仍用真实 pngjs。
+const PNGJS_STUB = path.resolve(projectRoot, 'src/native/pngjsStub.ts');
+const defaultResolve = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'pngjs' && platform !== 'web') {
+    return { type: 'sourceFile', filePath: PNGJS_STUB };
+  }
+  if (defaultResolve) return defaultResolve(context, moduleName, platform);
+  return context.resolveRequest(context, moduleName, platform);
+};
+
 module.exports = config;

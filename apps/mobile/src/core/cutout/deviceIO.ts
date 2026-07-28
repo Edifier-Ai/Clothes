@@ -1,13 +1,19 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { PNG } from 'pngjs';
 
 import type { PipelineIO } from '../cutout/pipelineCore';
 
 /**
  * 设备侧 PipelineIO：expo-file-system 做原子文件 I/O，pngjs 做 PNG 编解码
  * （与 host 测试同一编解码逻辑，保证派生图可重建）。Skia 仅用于修边画布显示。
- * 走文件路径/二进制，不走 Base64 进业务（Base64 仅作 fs↔bytes 传输）。
+ *
+ * 注意：pngjs 依赖 Node builtins（util/stream），RN 运行时不含，故仅在函数内懒 require，
+ * 使主 bundle 不打包 pngjs（抠图管线在设备本就 B-6 阻塞；主 bundle 不含 pngjs 才能让 app 启动）。
  */
+type PngJs = typeof import('pngjs');
+function pngjs(): PngJs {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('pngjs') as PngJs;
+}
 
 function join(a: string, b: string): string {
   return `${a.replace(/\/$/, '')}/${b.replace(/^\//, '')}`;
@@ -22,11 +28,13 @@ export function makeDeviceIO(rootAbs: string): PipelineIO {
       return base64ToBytes(b64);
     },
     encodePng: (rgba, w, h) => {
+      const { PNG } = pngjs();
       const png = new PNG({ width: w, height: h });
       for (let i = 0; i < w * h * 4; i++) png.data[i] = rgba[i];
       return PNG.sync.write(png);
     },
     encodeAlphaPng: (alpha, w, h) => {
+      const { PNG } = pngjs();
       const png = new PNG({ width: w, height: h });
       for (let i = 0; i < w * h; i++) {
         png.data[i * 4] = alpha[i];
@@ -37,6 +45,7 @@ export function makeDeviceIO(rootAbs: string): PipelineIO {
       return PNG.sync.write(png);
     },
     decodePng: (bytes) => {
+      const { PNG } = pngjs();
       const png = PNG.sync.read(Buffer.from(bytes));
       return { rgba: new Uint8Array(png.data), w: png.width, h: png.height };
     },

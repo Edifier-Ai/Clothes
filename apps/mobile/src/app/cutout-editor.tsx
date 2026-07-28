@@ -1,9 +1,15 @@
-import { Canvas, Image as SkiaImage, Rect, useImage } from '@shopify/react-native-skia';
+import type { SkImage } from '@shopify/react-native-skia';
 import { useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
-import { PNG } from 'pngjs';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+
+// pngjs 懒 require：RN 运行时不含 Node builtins，顶层 import 会破坏主 bundle；修边页本就 B-6 阻塞。
+type PngJs = typeof import('pngjs');
+function pngjs(): PngJs {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('pngjs') as PngJs;
+}
 
 import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
@@ -28,13 +34,14 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 function decodeMaskPng(b64: string): { alpha: Uint8Array; w: number; h: number } {
-  const png = PNG.sync.read(Buffer.from(base64ToBytes(b64)));
+  const png = pngjs().PNG.sync.read(Buffer.from(base64ToBytes(b64)));
   const alpha = new Uint8Array(png.width * png.height);
   for (let i = 0; i < alpha.length; i++) alpha[i] = png.data[i * 4];
   return { alpha, w: png.width, h: png.height };
 }
 
 function encodeMaskPng(alpha: Uint8Array, w: number, h: number): string {
+  const { PNG } = pngjs();
   const png = new PNG({ width: w, height: h });
   for (let i = 0; i < w * h; i++) {
     png.data[i * 4] = alpha[i];
@@ -42,7 +49,7 @@ function encodeMaskPng(alpha: Uint8Array, w: number, h: number): string {
     png.data[i * 4 + 2] = alpha[i];
     png.data[i * 4 + 3] = 255;
   }
-  const bytes = PNG.sync.write(png);
+  const bytes = pngjs().PNG.sync.write(png);
   let bin = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
@@ -53,6 +60,40 @@ function encodeMaskPng(alpha: Uint8Array, w: number, h: number): string {
 function now(): number {
   return Date.now();
 }
+
+interface SkiaCanvasProps {
+  imageUri: string | null;
+  w: number;
+  h: number;
+  scale: number;
+  offset: { x: number; y: number };
+  bg: Bg;
+  overlay: Array<{ x: number; y: number; w: number; h: number }>;
+  tick: number;
+}
+
+/**
+ * 懒加载 Skia 画布：Skia 通过 require 在此组件内加载，Metro 把它拆到独立 chunk，
+ * 启动主 bundle 不加载 Skia 原生模块，避免 B-6（Skia 未链接）连带崩溃其它路由。
+ * 仅当导航到修边页渲染本组件时才 require Skia。
+ */
+const SkiaCanvas = lazy(async () => {
+  const Skia = require('@shopify/react-native-skia') as typeof import('@shopify/react-native-skia');
+  const { Canvas, Image: SkiaImage, Rect, useImage } = Skia;
+  const Comp = ({ imageUri, w, h, scale, offset, bg, overlay, tick }: SkiaCanvasProps) => {
+    const origImg = useImage(imageUri) as SkImage | null;
+    return (
+      <Canvas style={{ flex: 1 }} key={tick}>
+        <Rect x={0} y={0} width={w} height={h} color={bg === 'checker' ? '#e8e8e8' : '#ffffff'} />
+        {origImg ? <SkiaImage image={origImg} x={offset.x} y={offset.y} width={w * scale} height={h * scale} fit="fill" /> : null}
+        {overlay.map((r, i) => (
+          <Rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} color="#7A2E3A66" />
+        ))}
+      </Canvas>
+    );
+  };
+  return { default: Comp };
+});
 
 function applyStroke(mask: Uint8Array, w: number, h: number, pts: number[], size: number, op: Mode): void {
   const val = op === 'erase' ? 0 : 255;
@@ -217,7 +258,7 @@ export default function CutoutEditorScreen() {
     setInfo('已保存蒙版（原图未动）');
   };
 
-  const origImg = useImage(jobRef.current ? `file://${rootRef.current}/${jobRef.current.originalRelPath}` : null);
+  const imageUri = jobRef.current ? `file://${rootRef.current}/${jobRef.current.originalRelPath}` : null;
   // 蒙版叠加采样（粗网格，性能）
   const STEP = 6;
   const overlay: Array<{ x: number; y: number; w: number; h: number }> = [];
@@ -272,13 +313,9 @@ export default function CutoutEditorScreen() {
       </View>
       <Text style={styles.info}>{info} · 笔 {brush} · ×{scale}</Text>
       <View style={styles.canvasWrap} onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })} {...(panRef.current?.panHandlers ?? {})}>
-        <Canvas style={styles.canvas} key={tick}>
-          <Rect x={0} y={0} width={size.w} height={size.h} color={bg === 'checker' ? '#e8e8e8' : '#ffffff'} />
-          {origImg ? <SkiaImage image={origImg} x={offset.x} y={offset.y} width={size.w * scale} height={size.h * scale} fit="fill" /> : null}
-          {overlay.map((r, i) => (
-            <Rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} color="#7A2E3A66" />
-          ))}
-        </Canvas>
+        <Suspense fallback={<View style={styles.canvas} />}>
+          <SkiaCanvas imageUri={imageUri} w={size.w} h={size.h} scale={scale} offset={offset} bg={bg} overlay={overlay} tick={tick} />
+        </Suspense>
       </View>
       <Text style={styles.hint}>工具栏切换「平移/笔刷」：平移拖动画面，笔刷拖动改蒙版；＋/− 缩放；撤销回退最近一笔；保存重写蒙版，原图绝不覆盖。</Text>
     </View>
