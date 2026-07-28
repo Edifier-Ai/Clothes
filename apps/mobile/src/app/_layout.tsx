@@ -1,4 +1,5 @@
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 
@@ -6,15 +7,21 @@ import { palette } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
 import { loadOnboardState } from '@/core/onboarding';
 
+SplashScreen.preventAutoHideAsync().catch(() => {
+  /* preventAutoHideAsync 在原生已隐藏时 reject，忽略 */
+});
+
 /**
  * 根布局：全屏 Stack + 深色状态栏（纸白背景）。
  *
- * 首启分流：加载 onboarding completed 状态——未完成则 initialRouteName='onboarding'，
- * 已完成则 '(tabs)'。状态加载前返回 null（native splash 保持），避免闪烁。
- * onboarding 完成后调 router.replace('/') 跳 (tabs)；途中 force-stop 重启会重新进入 onboarding 并恢复节点。
+ * 首启分流：加载 onboarding completed 状态——
+ * - 未完成 → <Redirect href="/onboarding" />（Expo Router 推荐方式，比 initialRouteName 可靠）
+ * - 已完成 → 正常渲染 Stack，初始路由 (tabs)
+ * 状态加载前保持原生 splash（preventAutoHideAsync），避免闪烁。
+ * onboarding 完成后调 router.replace('/') 跳 (tabs)；途中 force-stop 重启恢复节点。
  */
 export default function RootLayout() {
-  const [initial, setInitial] = useState<'(tabs)' | 'onboarding' | null>(null);
+  const [completed, setCompleted] = useState<boolean | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -23,10 +30,10 @@ export default function RootLayout() {
         const app = await openAppDb();
         const st = await loadOnboardState(app.db);
         if (!mounted) return;
-        setInitial(st.completed ? '(tabs)' : 'onboarding');
+        setCompleted(st.completed);
       } catch {
         // 读取失败默认进 onboarding（安全：让用户走流程，已录入数据不丢）
-        if (mounted) setInitial('onboarding');
+        if (mounted) setCompleted(false);
       }
     })();
     return () => {
@@ -34,12 +41,19 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!initial) return null;
+  useEffect(() => {
+    if (completed !== null) {
+      SplashScreen.hideAsync().catch(() => {
+        /* 已隐藏则忽略 */
+      });
+    }
+  }, [completed]);
+
+  if (completed === null) return null;
 
   return (
     <>
       <Stack
-        initialRouteName={initial}
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: palette.paperWhite },
@@ -53,6 +67,7 @@ export default function RootLayout() {
         <Stack.Screen name="garment/[id]" options={{ headerShown: true, title: '衣物' }} />
         <Stack.Screen name="segmentation-benchmark" options={{ headerShown: true, title: '抠图探针' }} />
       </Stack>
+      {!completed && <Redirect href="/onboarding" />}
       <StatusBar style="dark" />
     </>
   );

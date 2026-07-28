@@ -2,8 +2,8 @@
 
 最后更新：2026-07-28  
 当前阶段：P0  
-当前任务：MVP-004  
-状态：IN_PROGRESS（MVP-002 真图缺 BLOCKED；MVP-003 代码完整、设备验证因 Skia 不 autolink BLOCKED，见 B-3/B-5/B-6）
+当前任务：MVP-005  
+状态：MVP-004 ACCEPTED；MVP-005 待激活（MVP-002 真图缺 BLOCKED；MVP-003 代码完整、设备验证因 Skia 不 autolink BLOCKED，见 B-3/B-5/B-6）
 
 ## 状态枚举
 
@@ -16,9 +16,9 @@
 
 | 字段 | 内容 |
 |---|---|
-| 卡片 | `tasks/backlog/MVP-003-batch-cutout-editor.md` |
-| 依赖 | MVP-001（✓）；抠图模型 MVP-002 BLOCKED→本卡用可替换 SegmentationEngine(stub) 先做队列+修边，真模型接入留接口 |
-| 完成证据 | 批量队列持久+中断恢复+审核/修边 UI+原图不覆盖 |
+| 卡片 | `tasks/backlog/MVP-005-today-decision.md` |
+| 依赖 | MVP-004（✓ ACCEPTED） |
+| 完成证据 | 12 件合法衣橱稳定可复现推荐 + reason_codes 可追溯 + 记录原子写 + 重复提交幂等 + 不可用衣物排除 |
 
 ## MVP-002 结果（BLOCKED 无真图；管线/探针就绪）
 
@@ -46,6 +46,22 @@
 
 证据目录：`scripts/evidence/MVP-001/INDEX.md`
 
+## MVP-004 验收结果（ACCEPTED）
+
+| 检查 | 结果 |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | 11 suites / 69 passed / 0 skipped |
+| `pnpm lint` | 0 errors / 17 warnings（可接受） |
+| ONB-01..07 真机截图 | 齐（`scripts/evidence/MVP-004/onb-01..07-*.png`） |
+| 12 件首套只含真实衣物 | 是（id `019fa67a-...` 真实录入；理由 `含真实上装+下装 / 含鞋 / 含外套`） |
+| 配额进度 0→6→12 | 真机逐件更新（含连衣裙顶替逻辑） |
+| 途中 force-stop 重启恢复 | quota 步骤恢复（`onb-05-restart-recovery.png`） |
+| 二次启动直达今日页 | 是（`onb-07-restart-direct-today.png`，未走 onboarding） |
+| 反向验证 | host 测试「12 件但无鞋 → missing=['shoes']，补鞋后 ok=true」覆盖 |
+| 原图不覆盖 | `addOriginalOnly` 仅存原图+sha256，无蒙版写入 |
+| 持久方案 | expo-sqlite meta 表 + 镜像 v2（B-4 兜底） |
+
 ## MVP-003 结果（代码完整；设备验证 BLOCKED 见 B-6）
 
 | 检查 | 结果 |
@@ -57,24 +73,24 @@
 | 镜像 v2 | 含队列+操作栈，跨强杀恢复 |
 | UI | batch-import(IMP-02) + cutout-editor(IMP-03/04: Skia+PanResponder 平移/缩放/笔刷/撤销/保存) |
 | 质量门 | typecheck0 / lint0err / test 52/52/0 |
-| 设备验证 | **阻塞**：Skia v2.10 不 autolink（B-6），bundle 含 Skia 启动崩；待兼容版本/补 plugin |
+| 设备验证 | **部分**：metro pngjs→stub 重定向后纯 RN 屏可真机启动（见 MVP-003 evidence）；Skia 画布/抠图管线仍 B-6 阻塞 |
 
 ## P0 顺序
 
-`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003(代码✓/设备BLOCKED) → 004 → 005 → 006 → 007 → 008 → 009 → 010 → 011 → 012 → 013 → 014`
+`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003(代码✓/设备BLOCKED) → 004(✓) → 005 → 006 → 007 → 008 → 009 → 010 → 011 → 012 → 013 → 014`
 
 不得跳过依赖。任务被外部输入阻塞时，可做与其无依赖且不会造成返工的文档、测试夹具或下一卡预研，但不能把下一卡标为 `IN_PROGRESS`。
 
 ## 最近命令与结果
 
 - `pnpm install`（hoisted，lockfile 提交）exit 0
-- `pnpm typecheck|lint|test`：0 / 0err / 37-0
-- 真机：add/edit 跨 force-stop 持久；RED-GREEN 哨兵验证
+- `pnpm typecheck|lint|test`：0 / 0err / 69-0（含 onboarding 域逻辑 6 测试）
+- 真机 MVP-004：ONB-01..07 截图齐；12 件首套含真实衣物；force-stop 重启恢复 quota；二次启动直达今日页
 
 ## 恢复点
 
 1. 读取 `PROGRESS.md`。
-2. 读取本文件确认唯一当前卡（MVP-002）。
+2. 读取本文件确认唯一当前卡（MVP-005）。
 3. 读取当前卡的验收与非目标。
 4. 检查工作树，保留未知改动。
 5. 从“下一步”继续，不重复已留证据的工作。
