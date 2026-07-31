@@ -195,6 +195,8 @@ export interface TestDb {
   raw: DatabaseT;
   adapter: QueryableMigrationAdapter;
   db: GarmentDb;
+  /** drizzle 实例（与 queueTestHelper 对齐，便于直接表访问的模块使用）。 */
+  drizzleDb: BetterSQLite3Database<typeof schema>;
   filePath: string;
   close: () => void;
 }
@@ -203,10 +205,12 @@ async function openAt(filePath: string, migrate: boolean): Promise<TestDb> {
   const raw = new Database(filePath);
   const adapter = wrap(raw);
   if (migrate) await runMigrations(adapter, {});
+  const drizzleDb = drizzle(raw, { schema });
   return {
     raw,
     adapter,
     db: buildGarmentDb(raw),
+    drizzleDb,
     filePath,
     close: () => {
       raw.close();

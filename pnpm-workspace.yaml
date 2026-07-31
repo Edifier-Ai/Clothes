@@ -6,9 +6,11 @@ packages:
 nodeLinker: hoisted
 # 本机仅 win32-x64；不拉其他平台的 esbuild 等可选二进制，避免代理下抓取失败。
 supportedArchitectures:
-  os: [win32, current]
-  cpu: [x64, current]
+  os: [ win32, current ]
+  cpu: [ x64, current ]
 allowBuilds:
   better-sqlite3: true
   esbuild: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - expo-location@57.0.7

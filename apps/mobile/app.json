@@ -33,6 +33,12 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "仅在你主动点击时使用位置，以获取当地天气；拒绝后仍可手选城市或无天气继续。"
+        }
       ]
     ],
     "experiments": {

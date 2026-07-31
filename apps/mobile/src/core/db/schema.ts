@@ -1,4 +1,4 @@
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * 衣物领域 schema（Drizzle ORM over sqlite）。
@@ -139,3 +139,116 @@ export type TagKind = (typeof TAG_KINDS)[number];
 
 export type CutoutJobRow = typeof cutoutJobs.$inferSelect;
 export type MaskStrokeRow = typeof maskStrokes.$inferSelect;
+
+/**
+ * 推荐结果持久化（MVP-005）。
+ * - recommendations：一次推荐快照（输入摘要 + 选中搭配 + 总分）。
+ * - recommendation_items：推荐中每个槽位的衣物（top/bottom/shoes/outerwear?）。
+ * - reason_codes：命中的理由码（与前端展示一一对应，可追溯）。
+ */
+export const recommendations = sqliteTable('recommendations', {
+  id: text('id').primaryKey(),
+  /** YYYY-MM-DD，用于幂等与「今日推荐」查询。 */
+  date: text('date').notNull(),
+  /** 输入快照（衣物 id 列表 + 场景 + 天气），JSON。 */
+  inputJson: text('input_json').notNull(),
+  /** 选中搭配，JSON（Outfit 结构）。 */
+  outfitJson: text('outfit_json').notNull(),
+  totalScore: real('total_score').notNull(),
+  occasion: text('occasion'),
+  weatherTempC: real('weather_temp_c'),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const recommendationItems = sqliteTable('recommendation_items', {
+  id: text('id').primaryKey(),
+  recommendationId: text('recommendation_id')
+    .notNull()
+    .references(() => recommendations.id, { onDelete: 'cascade' }),
+  garmentId: text('garment_id')
+    .notNull()
+    .references(() => garments.id, { onDelete: 'cascade' }),
+  slot: text('slot').notNull(), // top | bottom | shoes | outerwear
+  ord: integer('ord').notNull(),
+});
+
+export const reasonCodes = sqliteTable('reason_codes', {
+  id: text('id').primaryKey(),
+  recommendationId: text('recommendation_id')
+    .notNull()
+    .references(() => recommendations.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  ord: integer('ord').notNull(),
+});
+
+/**
+ * 穿着记录（MVP-005）。
+ * - wear_logs：一次实际穿着（场景、时间、舒适度反馈）。
+ * - wear_log_items：该次穿着的衣物明细。
+ * 幂等：recommendation_id + date 唯一（同一天同一推荐只记一次）。
+ */
+export const wearLogs = sqliteTable('wear_logs', {
+  id: text('id').primaryKey(),
+  recommendationId: text('recommendation_id').notNull(),
+  /** YYYY-MM-DD，与 recommendation.date 对齐。 */
+  date: text('date').notNull(),
+  occasion: text('occasion'),
+  /** good | ok | bad | null（未填） */
+  comfort: text('comfort'),
+  note: text('note'),
+  createdAt: integer('created_at').notNull(),
+}, (t) => ({
+  recDateUq: index('wear_logs_rec_date_idx').on(t.recommendationId, t.date),
+}));
+
+export const wearLogItems = sqliteTable('wear_log_items', {
+  id: text('id').primaryKey(),
+  wearLogId: text('wear_log_id')
+    .notNull()
+    .references(() => wearLogs.id, { onDelete: 'cascade' }),
+  garmentId: text('garment_id')
+    .notNull()
+    .references(() => garments.id, { onDelete: 'cascade' }),
+  slot: text('slot').notNull(),
+  ord: integer('ord').notNull(),
+});
+
+/** 推荐交互反馈（MVP-006）：本地幂等事件，供后续规则软重排。 */
+export const feedbackEvents = sqliteTable('feedback_events', {
+  id: text('id').primaryKey(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  recommendationId: text('recommendation_id').notNull(),
+  eventType: text('event_type').notNull(), // accept | replace | skip | mode
+  slot: text('slot'),
+  beforeItemId: text('before_item_id'),
+  afterItemId: text('after_item_id'),
+  skipReason: text('skip_reason'),
+  mode: text('mode'),
+  createdAt: integer('created_at').notNull(),
+}, (t) => ({
+  idempotencyUq: uniqueIndex('feedback_events_idempotency_uq').on(t.idempotencyKey),
+  recIdx: index('feedback_events_rec_idx').on(t.recommendationId, t.createdAt),
+}));
+
+/** 按城市保存的天气窗口；过期缓存仍可在离线时明确降级使用。 */
+export const weatherCache = sqliteTable('weather_cache', {
+  cityId: text('city_id').primaryKey(),
+  cityName: text('city_name').notNull(),
+  latitude: real('latitude').notNull(),
+  longitude: real('longitude').notNull(),
+  fetchedAt: integer('fetched_at').notNull(),
+  windowStart: integer('window_start').notNull(),
+  windowEnd: integer('window_end').notNull(),
+  minTempC: real('min_temp_c').notNull(),
+  maxTempC: real('max_temp_c').notNull(),
+  conditionCode: text('condition_code').notNull(),
+  provider: text('provider').notNull(),
+});
+
+export type RecommendationRow = typeof recommendations.$inferSelect;
+export type RecommendationItemRow = typeof recommendationItems.$inferSelect;
+export type ReasonCodeRow = typeof reasonCodes.$inferSelect;
+export type WearLogRow = typeof wearLogs.$inferSelect;
+export type WearLogItemRow = typeof wearLogItems.$inferSelect;
+export type FeedbackEventRow = typeof feedbackEvents.$inferSelect;
+export type WeatherCacheRow = typeof weatherCache.$inferSelect;

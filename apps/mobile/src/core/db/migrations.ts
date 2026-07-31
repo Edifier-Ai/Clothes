@@ -27,7 +27,7 @@ export interface MigrationSql {
 }
 
 /** 当前最新 schema 版本；新增迁移追加到 MIGRATIONS 末尾，version 递增。 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 export const MIGRATIONS: readonly MigrationSql[] = [
   {
@@ -103,6 +103,87 @@ CREATE TABLE mask_strokes (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX mask_strokes_garment_ord_idx ON mask_strokes (garment_id, ord);
+`,
+  },
+  {
+    version: 3,
+    sql: `
+CREATE TABLE recommendations (
+  id TEXT PRIMARY KEY NOT NULL,
+  date TEXT NOT NULL,
+  input_json TEXT NOT NULL,
+  outfit_json TEXT NOT NULL,
+  total_score REAL NOT NULL,
+  occasion TEXT,
+  weather_temp_c REAL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX recommendations_date_idx ON recommendations (date);
+CREATE TABLE recommendation_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  recommendation_id TEXT NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
+  garment_id TEXT NOT NULL REFERENCES garments(id) ON DELETE CASCADE,
+  slot TEXT NOT NULL,
+  ord INTEGER NOT NULL
+);
+CREATE INDEX recommendation_items_rec_idx ON recommendation_items (recommendation_id);
+CREATE TABLE reason_codes (
+  id TEXT PRIMARY KEY NOT NULL,
+  recommendation_id TEXT NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  ord INTEGER NOT NULL
+);
+CREATE INDEX reason_codes_rec_idx ON reason_codes (recommendation_id);
+CREATE TABLE wear_logs (
+  id TEXT PRIMARY KEY NOT NULL,
+  recommendation_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  occasion TEXT,
+  comfort TEXT,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX wear_logs_rec_date_idx ON wear_logs (recommendation_id, date);
+CREATE TABLE wear_log_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  wear_log_id TEXT NOT NULL REFERENCES wear_logs(id) ON DELETE CASCADE,
+  garment_id TEXT NOT NULL REFERENCES garments(id) ON DELETE CASCADE,
+  slot TEXT NOT NULL,
+  ord INTEGER NOT NULL
+);
+CREATE INDEX wear_log_items_log_idx ON wear_log_items (wear_log_id);
+`,
+  },
+  {
+    version: 4,
+    sql: `
+CREATE TABLE feedback_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  recommendation_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  slot TEXT,
+  before_item_id TEXT,
+  after_item_id TEXT,
+  skip_reason TEXT,
+  mode TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX feedback_events_idempotency_uq ON feedback_events (idempotency_key);
+CREATE INDEX feedback_events_rec_idx ON feedback_events (recommendation_id, created_at);
+CREATE TABLE weather_cache (
+  city_id TEXT PRIMARY KEY NOT NULL,
+  city_name TEXT NOT NULL,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  window_start INTEGER NOT NULL,
+  window_end INTEGER NOT NULL,
+  min_temp_c REAL NOT NULL,
+  max_temp_c REAL NOT NULL,
+  condition_code TEXT NOT NULL,
+  provider TEXT NOT NULL
+);
 `,
   },
 ] as const;

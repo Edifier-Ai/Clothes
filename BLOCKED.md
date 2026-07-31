@@ -34,14 +34,23 @@ JSON 镜像 `garments_mirror.json` 为持久事实源——每次写后 `writeAs
 满足 TECH_STACK「本地 SQLite」并补齐本机缺失的落盘能力。dump/replaceAll 回灌逻辑由
 `garmentsDao.test.ts` 单测覆盖（37 tests 全绿）。设备级「add→force-stop→重启仍在」在镜像 APK 验收。
 
-## B-6 Skia 原生模块在 SDK57 环境不 autolink —— 修边画布设备验证阻塞（2026-07-28）
+## B-6 Skia 原生链接已解决；MVP-003 真图交互复验待补（2026-07-30 更新）
 
-`@shopify/react-native-skia@2.10.0` 在本机（Expo SDK57 / Expo autolinking）下既无
-`expo-module.config.json` 也无 `react-native.config.js`，故 `expo prebuild` 生成的
-`android/settings.gradle` 未 include 其 gradle 模块（实测 `SKIA NOT in settings`）。
-后果：含 Skia 的 JS bundle 在设备启动会因缺原生模块崩溃，修边画布（IMP-04 Skia Canvas）
-无法在该环境真机验证；批量导入/队列/管线不依赖 Skia，但同 bundle 受连带影响。
-手动 `include` 需 RN 完整 autolink 属性（namespace/SafeExtGet 上下文），脆弱且超出本环境可控范围。
-MVP-003 代码层（队列状态机+恢复+原子写+操作栈+修边 editor+PanResponder 平移/缩放/笔刷/撤销/保存）
-完整，typecheck0/lint0err/test52 全绿；设备级 IMP-02/03/04 截图与「杀进程恢复」真机验收因本阻塞未完成。
-待解决：换用与 SDK57 兼容的 Skia 版本或补 config plugin 后重编验收。
+- 2026-07-28 的原始现象：Android 端进入抠图编辑器时，Skia 原生模块加载失败。
+- 2026-07-30 已执行 Expo Android prebuild 和完整 Gradle Debug 构建；构建日志包含
+  `shopify_react-native-skia` 原生任务，505 个任务全部完成，APK 可安装并启动。
+- 原“Skia 未链接”根因已解除，不再阻塞后续原生构建。
+- 尚未具备一组真实衣物原图与抠图结果，MVP-003 的真实触控修边、撤销/重做和导出仍需随
+  B-3/B-5 的真图样本一起补验；在补验前不得把 MVP-003 标记为 `ACCEPTED`。
+- 构建证据：`scripts/evidence/MVP-006/gradle-build.stdout.log`。
+
+## B-7 MVP-006 缺少真实 Android 手机验收（2026-07-30）
+
+- 代码、105 个自动化测试、类型检查、Lint、Android 原生构建和 390×844 模拟器主路径均已通过。
+- 模拟器已覆盖单槽替换、整套换一套、模式、前台定位授权、拒绝定位、手选城市和离线缓存降级。
+- 当前 `adb devices` 没有 USB 真机；任务卡明确要求“真机截图与一次离线录屏”，因此
+  MVP-006 保持 `BLOCKED`，不能提前标记为 `ACCEPTED`，也不能越过依赖激活 MVP-007。
+- 解锁条件：连接 OnePlus 或任意物理 Android 手机，安装
+  `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`，按证据索引补拍
+  TDY-03/04/05/08 截图和一次飞行模式/断网恢复录屏。
+- 模拟器证据与复验清单：`scripts/evidence/MVP-006/INDEX.md`。
