@@ -364,6 +364,165 @@ export const plans = sqliteTable(
 export type PlanRow = typeof plans.$inferSelect;
 export type PlanStatus = 'planned' | 'completed' | 'changed';
 
+/**
+ * 旅行（MVP-010）。
+ *
+ * - start_date / end_date 是「旅行地的当地日期」字面量（YYYY-MM-DD），与 plans.date
+ *   同语义：存进去是什么，读出来就是什么，设备切换时区不偏移。time_zone 记录旅行
+ *   所在 IANA 时区（如 Asia/Tokyo），仅供 UI「今天是旅行第几天」换算——服务层
+ *   不做任何时区数学。
+ * - activities_json：手工活动列表（date + timeLabel + note），与 trip_outfits 解耦
+ *   （活动可无造型，造型也可不绑定活动）。天气快照可选（不可用则 null）。
+ * - 删除采用墓碑（deleted_at）；行保留供导出/恢复。
+ * - 无外键：trip_outfits/packing_items 引用 trip 不设外键，旅行墓碑不阻塞读取。
+ */
+export const trips = sqliteTable(
+  'trips',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    destination: text('destination').notNull(),
+    /** YYYY-MM-DD 旅行地当地日期字面量。 */
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    /** IANA 时区名，如 Asia/Tokyo。 */
+    timeZone: text('time_zone').notNull(),
+    /** JSON: [{date,timeLabel,note?}] 手工活动列表。 */
+    activitiesJson: text('activities_json').notNull().default('[]'),
+    /** JSON: 天气快照（可空）；结构见 TripWeatherSnapshot。 */
+    weatherSnapshotJson: text('weather_snapshot_json'),
+    /** planning | ongoing | completed | archived。 */
+    status: text('status').notNull().default('planning'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    activeIdx: index('trips_active_idx').on(t.deletedAt, t.updatedAt),
+  }),
+);
+
+/**
+ * 旅行内每日每时段的造型安排（MVP-010）。
+ *
+ * 仿 plans 表语义：
+ * - date 是当地日期字面量；time_label 如 白天/晚餐/自定义。
+ * - look_id 关联造型（无外键：造型墓碑不阻塞读取）；NULL 表示临时组合。
+ * - outfit_json 始终是单品 id 快照（关联造型保存时展开，与 plans 同）。
+ * - worn_status/worn_completed_at/worn_change_note 与计划同表分列：记录实际已穿
+ *   独立于安排，幂等（worn_status 非 planned 再记录原样返回）。
+ * - 删除采用墓碑（deleted_at）。
+ */
+export const tripOutfits = sqliteTable(
+  'trip_outfits',
+  {
+    id: text('id').primaryKey(),
+    tripId: text('trip_id').notNull(),
+    date: text('date').notNull(),
+    timeLabel: text('time_label').notNull(),
+    occasion: text('occasion'),
+    lookId: text('look_id'),
+    outfitJson: text('outfit_json').notNull(),
+    note: text('note'),
+    wornStatus: text('worn_status').notNull().default('planned'),
+    wornCompletedAt: integer('worn_completed_at'),
+    wornChangeNote: text('worn_change_note'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    tripDateIdx: index('trip_outfits_trip_date_idx').on(t.tripId, t.deletedAt, t.date, t.createdAt),
+  }),
+);
+
+/**
+ * 打包清单项（MVP-010）。
+ *
+ * 勾选状态与衣物事实分离：
+ * - kind='garment' 时 garment_id 引用衣物（无外键），source_count/source_outfit_ids_json
+ *   随 trip_outfits 重算；衣物墓碑/归档/不存在 → missing 由视图层判定，行不删。
+ * - kind='manual' 时 garment_id 为 NULL，label 是手工输入；不被重新生成覆盖。
+ * - checked/checked_at 独立于 source_count：重新生成保留仍存在项的勾选状态
+ *   （任务卡锚点）；不再被使用的 garment 项被删除（清单只根据已安排造型去重）。
+ * - 唯一约束：(trip_id, kind, garment_id) 保证 garment 项去重幂等；
+ *   manual 项无唯一约束（同名允许重复，由 ord 区分）。
+ */
+export const packingItems = sqliteTable(
+  'packing_items',
+  {
+    id: text('id').primaryKey(),
+    tripId: text('trip_id').notNull(),
+    /** garment | manual。 */
+    kind: text('kind').notNull(),
+    garmentId: text('garment_id'),
+    /** 展示名：manual 时手工输入；garment 时冗余衣物名快照（衣物改名后清单稳定）。 */
+    label: text('label').notNull(),
+    sourceCount: integer('source_count').notNull().default(0),
+    /** JSON string[]：引用 trip_outfit.id 列表（garment 项）。 */
+    sourceOutfitIdsJson: text('source_outfit_ids_json').notNull().default('[]'),
+    checked: integer('checked').notNull().default(0),
+    checkedAt: integer('checked_at'),
+    /** 排序：garment 优先（按 sourceCount 倒序+label），manual 按 createdAt。 */
+    ord: integer('ord').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => ({
+    tripIdx: index('packing_items_trip_idx').on(t.tripId, t.kind, t.ord),
+    /** garment 项去重幂等：同 trip + 同 garment 只一项。manual 项 garment_id 为 NULL 不参与唯一。 */
+    garmentUq: uniqueIndex('packing_items_trip_garment_uq').on(t.tripId, t.garmentId),
+  }),
+);
+
+/**
+ * 旅行模板（MVP-010 复盘后保存）。
+ *
+ * 模板项是纯标签清单（kind/label/garmentId?），不绑定具体旅行；
+ * 下次新建旅行时可基于模板预填手工项。删除采用墓碑（deleted_at）。
+ */
+export const tripTemplates = sqliteTable(
+  'trip_templates',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    sourceTripId: text('source_trip_id'),
+    /** JSON: [{kind,label,garmentId?}] 模板项清单。 */
+    itemsJson: text('items_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    activeIdx: index('trip_templates_active_idx').on(t.deletedAt, t.updatedAt),
+  }),
+);
+
+export type TripRow = typeof trips.$inferSelect;
+export type TripStatus = 'planning' | 'ongoing' | 'completed' | 'archived';
+export type TripOutfitRow = typeof tripOutfits.$inferSelect;
+export type TripOutfitWornStatus = 'planned' | 'completed' | 'changed';
+export type PackingItemRow = typeof packingItems.$inferSelect;
+export type PackingItemKind = 'garment' | 'manual';
+export type TripTemplateRow = typeof tripTemplates.$inferSelect;
+
+/** 旅行天气快照结构（存 trips.weather_snapshot_json）。 */
+export interface TripWeatherSnapshot {
+  fetchedAt: number;
+  minTempC: number;
+  maxTempC: number;
+  conditionCode: string;
+  provider: string;
+  cityName: string;
+}
+
+/** 旅行手工活动结构（存 trips.activities_json）。 */
+export interface TripActivity {
+  date: string;
+  timeLabel: string;
+  note?: string | null;
+}
+
 export type RecommendationRow = typeof recommendations.$inferSelect;
 export type RecommendationItemRow = typeof recommendationItems.$inferSelect;
 export type ReasonCodeRow = typeof reasonCodes.$inferSelect;

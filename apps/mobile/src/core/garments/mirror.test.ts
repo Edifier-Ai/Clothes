@@ -66,19 +66,24 @@ async function seed(db: import('../db/dao').GarmentDb) {
   });
 }
 
-describe('镜像 v7', () => {
-  it('writeMirror 写 version 7 且包含 looks/lookItems/plans', async () => {
+describe('镜像 v8', () => {
+  it('writeMirror 写 version 8 且包含 looks/lookItems/plans/trips/tripOutfits/packingItems/tripTemplates', async () => {
     mockFiles.clear();
     const a = await openTestDb();
     await seed(a.db);
     await writeMirror(ROOT, a.db, drizzleAsExpo(a), 5_000);
 
     const raw = JSON.parse(mockFiles.get(MIRROR_PATH)!) as Record<string, unknown>;
-    expect(raw.version).toBe(7);
+    expect(raw.version).toBe(8);
     expect(Array.isArray(raw.looks)).toBe(true);
     expect((raw.looks as unknown[]).length).toBe(1);
     expect((raw.lookItems as unknown[]).length).toBe(1);
     expect(Array.isArray(raw.plans)).toBe(true);
+    // v8 新增四表字段（随 GarmentDump 落盘，空数组）
+    expect(Array.isArray(raw.trips)).toBe(true);
+    expect(Array.isArray(raw.tripOutfits)).toBe(true);
+    expect(Array.isArray(raw.packingItems)).toBe(true);
+    expect(Array.isArray(raw.tripTemplates)).toBe(true);
     a.close();
   });
 
@@ -152,7 +157,7 @@ describe('镜像 v7', () => {
     // 同一 DB：data_updated_at 已为 3_000，不新不旧 → 不回灌
     expect(await restoreFromMirrorIfNeeded(ROOT, a.db, drizzleAsExpo(a))).toBe(false);
     const m = await readMirror(ROOT);
-    expect(m?.version).toBe(7);
+    expect(m?.version).toBe(8);
     a.close();
   });
 });

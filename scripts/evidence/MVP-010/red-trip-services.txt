@@ -1,0 +1,74 @@
+FAIL src/core/trip/packView.test.ts
+  ● Test suite failed to run
+
+    Cannot find module './packView' from 'src/core/trip/packView.test.ts'
+
+    However, Jest was able to find:
+    	'./packView.test.ts'
+
+    You might want to include a file extension in your import, or update your 'moduleFileExtensions', which is currently ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node'].
+
+    See https://jestjs.io/docs/configuration#modulefileextensions-arraystring
+
+      12 | import { describe, expect, it } from '@jest/globals';
+      13 |
+    > 14 | import {
+         | ^
+      15 |   computePackingFromOutfits,
+      16 |   packingSummary,
+      17 |   tripsByStatus,
+
+      at Resolver._throwModNotFoundError (../../node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.require (src/core/trip/packView.test.ts:14:1)
+
+FAIL src/core/trip/packingService.test.ts
+  ● Test suite failed to run
+
+    Cannot find module './tripService' from 'src/core/trip/packingService.test.ts'
+
+    However, Jest was able to find:
+    	'./tripService.test.ts'
+
+    You might want to include a file extension in your import, or update your 'moduleFileExtensions', which is currently ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node'].
+
+    See https://jestjs.io/docs/configuration#modulefileextensions-arraystring
+
+      19 | import { openTestDb, reopenDb, type TestDb } from '../db/sqliteTestHelper';
+      20 | import { createLook, dumpAll, softDeleteLook, type CreateLookInput } from '../db/dao';
+    > 21 | import { saveTripCore, saveTripOutfitCore, deleteTripOutfitCore } from './tripService';
+         | ^
+      22 | import {
+      23 |   addManualItemCore,
+      24 |   listPackingItemsCore,
+
+      at Resolver._throwModNotFoundError (../../node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.require (src/core/trip/packingService.test.ts:21:1)
+
+FAIL src/core/trip/tripService.test.ts
+  ● Test suite failed to run
+
+    Cannot find module './tripService' from 'src/core/trip/tripService.test.ts'
+
+    However, Jest was able to find:
+    	'./tripService.test.ts'
+
+    You might want to include a file extension in your import, or update your 'moduleFileExtensions', which is currently ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node'].
+
+    See https://jestjs.io/docs/configuration#modulefileextensions-arraystring
+
+      16 | import { openTestDb, reopenDb, type TestDb } from '../db/sqliteTestHelper';
+      17 | import { createLook, dumpAll, softDeleteLook, type CreateLookInput } from '../db/dao';
+    > 18 | import {
+         | ^
+      19 |   deleteTripCore,
+      20 |   deleteTripOutfitCore,
+      21 |   getTripCore,
+
+      at Resolver._throwModNotFoundError (../../node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.require (src/core/trip/tripService.test.ts:18:1)
+
+Test Suites: 3 failed, 3 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        1.691 s
+EXIT=1

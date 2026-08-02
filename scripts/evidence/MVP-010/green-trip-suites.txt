@@ -1,0 +1,9 @@
+PASS src/core/trip/packView.test.ts
+PASS src/core/trip/tripService.test.ts
+PASS src/core/trip/packingService.test.ts
+
+Test Suites: 3 passed, 3 total
+Tests:       35 passed, 35 total
+Snapshots:   0 total
+Time:        1.999 s, estimated 2 s
+Ran all test suites matching /src\\core\\trip\\packView.test.ts|src\\core\\trip\\packingService.test.ts|src\\core\\trip\\tripService.test.ts/i.

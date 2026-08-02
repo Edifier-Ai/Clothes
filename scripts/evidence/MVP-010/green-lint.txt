@@ -1,0 +1,23 @@
+
+D:\Projects\Clothes\apps\mobile\src\app\batch-import.tsx
+  80:6  warning  React Hook useEffect has a missing dependency: 'runQueue'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\Projects\Clothes\apps\mobile\src\app\cutout-editor.tsx
+  245:18  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+D:\Projects\Clothes\apps\mobile\src\features\cutout\SkiaCanvas.tsx
+  14:12  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+D:\Projects\Clothes\apps\mobile\src\features\wardrobe\OtherTabsScreen.test.tsx
+  10:17  warning  A `require()` style import is forbidden                                                                                                                                                                                    @typescript-eslint/no-require-imports
+  13:69  warning  React Hook React.useEffect has a missing dependency: 'cb'. Either include it or remove the dependency array. If 'cb' changes too often, find the parent component that defines it and wrap that definition in useCallback  react-hooks/exhaustive-deps
+  44:1   warning  Import in body of module; reorder to top                                                                                                                                                                                   import/first
+  45:1   warning  Import in body of module; reorder to top                                                                                                                                                                                   import/first
+  46:1   warning  Import in body of module; reorder to top                                                                                                                                                                                   import/first
+
+D:\Projects\Clothes\apps\mobile\src\native\skiaPngCodec.test.ts
+  29:1  warning  Import in body of module; reorder to top  import/first
+
+✖ 9 problems (0 errors, 9 warnings)
+  0 errors and 6 warnings potentially fixable with the `--fix` option.
+

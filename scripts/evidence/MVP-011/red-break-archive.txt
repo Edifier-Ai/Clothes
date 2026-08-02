@@ -1,0 +1,50 @@
+$ jest --ci "src/core/insights"
+FAIL src/core/insights/metrics.test.ts
+  ● computeIdleReport（久未穿 30/60/90 + 新录入未穿） › 新录入未穿与长期未穿分开；归档衣物不进久未穿
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 0
+    + Received  + 1
+
+      Array [
+        "g7",
+    +   "g8",
+      ]
+
+      174 |     expect(r.idle30.map((i) => i.garmentId)).toEqual(['g5']);
+      175 |     expect(r.idle60.map((i) => i.garmentId)).toEqual(['g6']);
+    > 176 |     expect(r.idle90.map((i) => i.garmentId)).toEqual(['g7']);
+          |                                              ^
+      177 |     // g8 归档 → 不进任何久未穿桶（即便 95 天）
+      178 |     expect([...r.idle30, ...r.idle60, ...r.idle90].find((i) => i.garmentId === 'g8')).toBeUndefined();
+      179 |     // g1/g2/g3 近期穿过（<30 天）→ 不进久未穿
+
+      at Object.toEqual (src/core/insights/metrics.test.ts:176:46)
+
+FAIL src/core/insights/insightsService.test.ts
+  ● 归档保留历史贡献但不进当前可穿库存/久未穿 › 归档衣物不进久未穿列表
+
+    expect(received).toBeUndefined()
+
+    Received: {"daysSinceLastWorn": 100, "garmentId": "g2", "idleThreshold": 90, "kind": "idle", "lastWornAt": 1776816000000}
+
+      206 |     const allIdle = [...view.report.idle30, ...view.report.idle60, ...view.report.idle90];
+      207 |     expect(allIdle.find((i) => i.garmentId === 'g1')?.idleThreshold).toBe(90);
+    > 208 |     expect(allIdle.find((i) => i.garmentId === 'g2')).toBeUndefined();
+          |                                                       ^
+      209 |     t.close();
+      210 |   });
+      211 | });
+
+      at Object.toBeUndefined (src/core/insights/insightsService.test.ts:208:55)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+Test Suites: 2 failed, 2 total
+Tests:       2 failed, 35 passed, 37 total
+Snapshots:   0 total
+Time:        1.508 s, estimated 2 s
+Ran all test suites matching /src\\core\\insights/i.
+[ELIFECYCLE] Test failed. See above for more details.
+[WARN]  Local package.json exists, but node_modules missing, did you mean to install?

@@ -27,7 +27,7 @@ export interface MigrationSql {
 }
 
 /** 当前最新 schema 版本；新增迁移追加到 MIGRATIONS 末尾，version 递增。 */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const MIGRATIONS: readonly MigrationSql[] = [
   {
@@ -248,6 +248,70 @@ CREATE TABLE plans (
   deleted_at INTEGER
 );
 CREATE INDEX plans_date_idx ON plans (deleted_at, date);
+`,
+  },
+  {
+    version: 8,
+    sql: `
+CREATE TABLE trips (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  time_zone TEXT NOT NULL,
+  activities_json TEXT NOT NULL DEFAULT '[]',
+  weather_snapshot_json TEXT,
+  status TEXT NOT NULL DEFAULT 'planning',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX trips_active_idx ON trips (deleted_at, updated_at);
+CREATE TABLE trip_outfits (
+  id TEXT PRIMARY KEY NOT NULL,
+  trip_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  time_label TEXT NOT NULL,
+  occasion TEXT,
+  look_id TEXT,
+  outfit_json TEXT NOT NULL,
+  note TEXT,
+  worn_status TEXT NOT NULL DEFAULT 'planned',
+  worn_completed_at INTEGER,
+  worn_change_note TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX trip_outfits_trip_date_idx ON trip_outfits (trip_id, deleted_at, date, created_at);
+CREATE TABLE packing_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  trip_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  garment_id TEXT,
+  label TEXT NOT NULL,
+  source_count INTEGER NOT NULL DEFAULT 0,
+  source_outfit_ids_json TEXT NOT NULL DEFAULT '[]',
+  checked INTEGER NOT NULL DEFAULT 0,
+  checked_at INTEGER,
+  ord INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX packing_items_trip_idx ON packing_items (trip_id, kind, ord);
+-- garment 项去重幂等：同 trip + 同 garment 只一项；manual 项 garment_id 为 NULL，SQLite 唯一索引允许多 NULL。
+CREATE UNIQUE INDEX packing_items_trip_garment_uq ON packing_items (trip_id, garment_id);
+CREATE TABLE trip_templates (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  source_trip_id TEXT,
+  items_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX trip_templates_active_idx ON trip_templates (deleted_at, updated_at);
 `,
   },
 ] as const;

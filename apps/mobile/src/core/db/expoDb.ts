@@ -3,7 +3,19 @@ import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
 import * as schema from './schema';
-import { garmentAssets, garmentStatusEvents, garmentTags, garments, lookItems, looks, plans } from './schema';
+import {
+  garmentAssets,
+  garmentStatusEvents,
+  garmentTags,
+  garments,
+  lookItems,
+  looks,
+  packingItems,
+  plans,
+  tripOutfits,
+  tripTemplates,
+  trips,
+} from './schema';
 import type {
   GarmentAssetRow,
   GarmentRow,
@@ -11,7 +23,11 @@ import type {
   GarmentTagRow,
   LookItemRow,
   LookRow,
+  PackingItemRow,
   PlanRow,
+  TripOutfitRow,
+  TripRow,
+  TripTemplateRow,
 } from './schema';
 import type { GarmentDb, GarmentDbOps } from './dao';
 import { runMigrations, type QueryableMigrationAdapter } from './migrations';
@@ -214,6 +230,126 @@ function opsOf(d: ExpoSQLiteDatabase<typeof schema>, raw: SQLiteDatabase): Garme
       Promise.resolve((d.select().from(plans).all() as unknown as PlanRow[]) ?? []),
     deleteAllPlans: () => {
       d.delete(plans).run();
+      return Promise.resolve();
+    },
+    // 旅行（MVP-010）。
+    insertTrip: (row) => {
+      d.insert(trips).values(row).run();
+      return Promise.resolve();
+    },
+    getTrip: (id) =>
+      Promise.resolve(
+        (d.select().from(trips).where(eq(trips.id, id)).get() as unknown as TripRow | null) ?? null,
+      ),
+    listActiveTrips: () =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(trips)
+          .where(isNull(trips.deletedAt))
+          .orderBy(desc(trips.updatedAt))
+          .all() as unknown as TripRow[]) ?? [],
+      ),
+    updateTrip: (id, fields) => {
+      d.update(trips).set(fields).where(eq(trips.id, id)).run();
+      return Promise.resolve();
+    },
+    getAllTrips: () =>
+      Promise.resolve((d.select().from(trips).all() as unknown as TripRow[]) ?? []),
+    deleteAllTrips: () => {
+      d.delete(trips).run();
+      return Promise.resolve();
+    },
+    // 旅行内每日造型安排。
+    insertTripOutfit: (row) => {
+      d.insert(tripOutfits).values(row).run();
+      return Promise.resolve();
+    },
+    getTripOutfit: (id) =>
+      Promise.resolve(
+        (d.select().from(tripOutfits).where(eq(tripOutfits.id, id)).get() as unknown as TripOutfitRow | null) ?? null,
+      ),
+    listActiveTripOutfits: (tripId) =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(tripOutfits)
+          .where(and(eq(tripOutfits.tripId, tripId), isNull(tripOutfits.deletedAt)))
+          .orderBy(asc(tripOutfits.date), asc(tripOutfits.createdAt))
+          .all() as unknown as TripOutfitRow[]) ?? [],
+      ),
+    updateTripOutfit: (id, fields) => {
+      d.update(tripOutfits).set(fields).where(eq(tripOutfits.id, id)).run();
+      return Promise.resolve();
+    },
+    getAllTripOutfits: () =>
+      Promise.resolve((d.select().from(tripOutfits).all() as unknown as TripOutfitRow[]) ?? []),
+    deleteAllTripOutfits: () => {
+      d.delete(tripOutfits).run();
+      return Promise.resolve();
+    },
+    // 打包清单项。
+    insertPackingItem: (row) => {
+      d.insert(packingItems).values(row).run();
+      return Promise.resolve();
+    },
+    getPackingItem: (id) =>
+      Promise.resolve(
+        (d.select().from(packingItems).where(eq(packingItems.id, id)).get() as unknown as PackingItemRow | null) ?? null,
+      ),
+    listPackingItemsByTrip: (tripId) =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(packingItems)
+          .where(eq(packingItems.tripId, tripId))
+          .orderBy(asc(packingItems.kind), asc(packingItems.ord))
+          .all() as unknown as PackingItemRow[]) ?? [],
+      ),
+    updatePackingItem: (id, fields) => {
+      d.update(packingItems).set(fields).where(eq(packingItems.id, id)).run();
+      return Promise.resolve();
+    },
+    deletePackingItem: (id) => {
+      d.delete(packingItems).where(eq(packingItems.id, id)).run();
+      return Promise.resolve();
+    },
+    deletePackingItemsByTrip: (tripId) => {
+      d.delete(packingItems).where(eq(packingItems.tripId, tripId)).run();
+      return Promise.resolve();
+    },
+    getAllPackingItems: () =>
+      Promise.resolve((d.select().from(packingItems).all() as unknown as PackingItemRow[]) ?? []),
+    deleteAllPackingItems: () => {
+      d.delete(packingItems).run();
+      return Promise.resolve();
+    },
+    // 旅行模板。
+    insertTripTemplate: (row) => {
+      d.insert(tripTemplates).values(row).run();
+      return Promise.resolve();
+    },
+    getTripTemplate: (id) =>
+      Promise.resolve(
+        (d.select().from(tripTemplates).where(eq(tripTemplates.id, id)).get() as unknown as TripTemplateRow | null) ?? null,
+      ),
+    listActiveTripTemplates: () =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(tripTemplates)
+          .where(isNull(tripTemplates.deletedAt))
+          .orderBy(desc(tripTemplates.updatedAt))
+          .all() as unknown as TripTemplateRow[]) ?? [],
+      ),
+    updateTripTemplate: (id, fields) => {
+      d.update(tripTemplates).set(fields).where(eq(tripTemplates.id, id)).run();
+      return Promise.resolve();
+    },
+    getAllTripTemplates: () =>
+      Promise.resolve((d.select().from(tripTemplates).all() as unknown as TripTemplateRow[]) ?? []),
+    deleteAllTripTemplates: () => {
+      d.delete(tripTemplates).run();
       return Promise.resolve();
     },
     getMetaInt: async (key) => {

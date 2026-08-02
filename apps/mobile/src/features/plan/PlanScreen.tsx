@@ -83,6 +83,14 @@ export default function PlanScreen() {
     <TabShell title="计划" subtitle="日历 · 旅行">
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <ScrollView contentContainerStyle={styles.scroll}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="进入旅行打包"
+          onPress={() => router.push('/trips')}
+          style={styles.tripEntryBtn}
+        >
+          <Text style={styles.tripEntryLabel}>旅行打包 →</Text>
+        </Pressable>
         <View style={styles.monthRow}>
           <Pressable accessibilityRole="button" accessibilityLabel="上一月" onPress={() => shiftMonth(-1)} style={styles.monthNav}>
             <Text style={styles.monthNavText}>‹</Text>
@@ -190,6 +198,17 @@ export default function PlanScreen() {
 const styles = StyleSheet.create({
   errorText: { ...typography.bodySm, color: palette.danger, paddingHorizontal: spacing.lg },
   scroll: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  tripEntryBtn: {
+    minHeight: hitTarget.preferred,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.oxblood,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tripEntryLabel: { ...typography.body, color: palette.oxblood },
   monthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm },
   monthNav: { minWidth: hitTarget.min, minHeight: hitTarget.min, alignItems: 'center', justifyContent: 'center' },
   monthNavText: { ...typography.title, color: palette.charcoal },

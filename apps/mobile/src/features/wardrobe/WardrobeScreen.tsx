@@ -135,13 +135,24 @@ export default function WardrobeScreen() {
       title="衣橱"
       subtitle={inArchive ? `已归档 · ${entries.length} 件` : `${entries.length} 件衣物`}
       trailing={
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.push('/batch-import')}
-          style={styles.addBtn}
-        >
-          <Text style={styles.addBtnLabel}>+ 添加</Text>
-        </Pressable>
+        <View style={styles.trailingRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="查看衣橱洞察"
+            onPress={() => router.push('/insights')}
+            style={styles.insightBtn}
+          >
+            <Text style={styles.insightBtnLabel}>洞察</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="添加衣物"
+            onPress={() => router.push('/batch-import')}
+            style={styles.addBtn}
+          >
+            <Text style={styles.addBtnLabel}>+ 添加</Text>
+          </Pressable>
+        </View>
       }
     >
       <View style={styles.searchRow}>
@@ -365,13 +376,22 @@ export default function WardrobeScreen() {
 }
 
 const styles = StyleSheet.create({
+  trailingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  insightBtn: {
+    minHeight: hitTarget.min,
+    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.mutedGold,
+  },
+  insightBtnLabel: { ...typography.bodySm, color: palette.mutedGold },
   addBtn: {
     minHeight: hitTarget.min,
     paddingHorizontal: spacing.md,
     justifyContent: 'center',
     borderRadius: radius.pill,
     backgroundColor: palette.oxblood,
-    marginLeft: spacing.sm,
   },
   addBtnLabel: { ...typography.bodySm, color: palette.white },
   searchRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.sm, marginBottom: spacing.xs },

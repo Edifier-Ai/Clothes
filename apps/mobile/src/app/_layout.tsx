@@ -71,6 +71,12 @@ export default function RootLayout() {
         <Stack.Screen name="look-from-garment" options={{ headerShown: true, title: '由此创建造型' }} />
         <Stack.Screen name="plan/[date]" options={{ headerShown: true, title: '计划' }} />
         <Stack.Screen name="plan-edit" options={{ headerShown: true, title: '添加计划' }} />
+        <Stack.Screen name="trips" options={{ headerShown: true, title: '旅行' }} />
+        <Stack.Screen name="trip-edit" options={{ headerShown: true, title: '旅行' }} />
+        <Stack.Screen name="trip/[id]" options={{ headerShown: true, title: '旅行总览' }} />
+        <Stack.Screen name="trip-day" options={{ headerShown: true, title: '安排造型' }} />
+        <Stack.Screen name="trip-packing/[tripId]" options={{ headerShown: true, title: '打包清单' }} />
+        <Stack.Screen name="trip-review/[tripId]" options={{ headerShown: true, title: '旅行复盘' }} />
       </Stack>
       {!completed && <Redirect href="/onboarding" />}
       <StatusBar style="dark" />

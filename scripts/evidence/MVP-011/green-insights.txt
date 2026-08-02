@@ -1,0 +1,9 @@
+$ jest --ci "--ci" "src/core/insights"
+PASS src/core/insights/metrics.test.ts
+PASS src/core/insights/insightsService.test.ts
+
+Test Suites: 2 passed, 2 total
+Tests:       37 passed, 37 total
+Snapshots:   0 total
+Time:        1.393 s, estimated 2 s
+Ran all test suites matching /src\\core\\insights/i.

@@ -34,7 +34,9 @@ import {
  * + wear_logs + wear_log_items，使推荐快照与穿着记录也跨强杀恢复；v4 加入反馈和天气缓存；
  * v5 加入 garment_status_events（随 GarmentDump.statusEvents，MVP-007 状态历史）；
  * v6 加入 looks + look_items（随 GarmentDump.looks/lookItems，MVP-008 造型）；
- * v7 加入 plans（随 GarmentDump.plans，MVP-009 计划）。
+ * v7 加入 plans（随 GarmentDump.plans，MVP-009 计划）；
+ * v8 加入 trips + trip_outfits + packing_items + trip_templates（随 GarmentDump，
+ *   MVP-010 旅行打包）。
  */
 
 const MIRROR_REL = 'garments_mirror.json';
@@ -47,6 +49,21 @@ export interface RecDump {
   wearLogItems: WearLogItemRow[];
 }
 
+export interface MirrorFileV8 extends GarmentDump {
+  version: 8;
+  updatedAt: number;
+  cutoutJobs: CutoutJobRow[];
+  maskStrokes: MaskStrokeRow[];
+  recommendations: RecommendationRow[];
+  recommendationItems: RecommendationItemRow[];
+  reasonCodes: ReasonCodeRow[];
+  wearLogs: WearLogRow[];
+  wearLogItems: WearLogItemRow[];
+  feedbackEvents: FeedbackEventRow[];
+  weatherCache: WeatherCacheRow[];
+}
+
+/** v7 镜像（兼容旧文件读取；trips/tripOutfits/packingItems/tripTemplates 在 GarmentDump 内为可选，回灌按空处理）。 */
 export interface MirrorFileV7 extends GarmentDump {
   version: 7;
   updatedAt: number;
@@ -125,6 +142,7 @@ export interface MirrorFileV2 extends GarmentDump {
 }
 
 export type MirrorFile =
+  | MirrorFileV8
   | MirrorFileV7
   | MirrorFileV6
   | MirrorFileV5
@@ -181,7 +199,7 @@ export async function writeMirror(
     wearLogs: [], wearLogItems: [],
     feedbackEvents: [], weatherCache: [],
   };
-  const payload: MirrorFileV7 = { version: 7, updatedAt: now, ...dump, ...extra };
+  const payload: MirrorFileV8 = { version: 8, updatedAt: now, ...dump, ...extra };
   await FileSystem.writeAsStringAsync(mirrorPath(rootAbs), JSON.stringify(payload), {
     encoding: FileSystem.EncodingType.UTF8,
   });

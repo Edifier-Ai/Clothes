@@ -1,0 +1,12 @@
+PASS src/core/db/looksDao.test.ts (8.328 s)
+PASS src/core/looks/lookService.test.ts (9.042 s)
+PASS src/core/plan/planService.test.ts (9.144 s)
+PASS src/core/db/garmentsDao.test.ts (9.09 s)
+PASS src/core/trip/tripService.test.ts (9.373 s)
+PASS src/core/trip/packingService.test.ts (9.598 s)
+PASS src/core/wardrobe/perf.test.ts (10.195 s)
+
+Test Suites: 61 passed, 61 total
+Tests:       461 passed, 461 total
+Snapshots:   0 total
+Time:        10.774 s

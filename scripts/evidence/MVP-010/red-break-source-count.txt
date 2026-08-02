@@ -1,0 +1,60 @@
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 5
+    Received: 1
+
+      112 |     expect(items).toHaveLength(1);
+      113 |     expect(items[0].garmentId).toBe('g-shoe');
+    > 114 |     expect(items[0].sourceCount).toBe(5);
+          |                                  ^
+      115 |
+      116 |     // 移除一套（墓碑）
+      117 |     await deleteTripOutfitCore(t.db, outfitIds[0]);
+
+      at Object.toBe (src/core/trip/packingService.test.ts:114:34)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+  ● 手工项目（不被重新生成覆盖） › 删除某日造型后重算来源计数，不删手工项
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+      168 |     await regeneratePackingCore(t.db, 'trip1');
+      169 |     let items = await listPackingItemsCore(t.db, 'trip1');
+    > 170 |     expect(items.find((i) => i.garmentId === 'g1')!.sourceCount).toBe(2);
+          |                                                                  ^
+      171 |     expect(items.find((i) => i.label === '牙刷')).toBeDefined();
+      172 |
+      173 |     // 删除第一套（9-01），重算后 g1 来源数 1
+
+      at Object.toBe (src/core/trip/packingService.test.ts:170:66)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+  ● 勾选状态（与衣物事实分离，幂等） › 重新生成保留仍存在项目的勾选状态
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+      216 |     expect(g1After.checked).toBe(true);
+      217 |     expect(g1After.checkedAt).toBe(5000);
+    > 218 |     expect(g1After.sourceCount).toBe(2); // 来源数已更新
+          |                                 ^
+      219 |   });
+      220 |
+      221 |   it('勾选手工项独立于衣物项', async () => {
+
+      at Object.toBe (src/core/trip/packingService.test.ts:218:33)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+Test Suites: 2 failed, 2 total
+Tests:       9 failed, 12 passed, 21 total
+Snapshots:   0 total
+Time:        1.948 s, estimated 2 s
+Ran all test suites matching /src\\core\\trip\\packView.test.ts|src\\core\\trip\\packingService.test.ts/i.

@@ -49,7 +49,8 @@ describe('其余三个主标签页骨架', () => {
   it('衣橱页显示标题与空状态主操作', () => {
     render(<WardrobeScreen />);
     expect(screen.getByText('衣橱')).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: '添加衣物' })).toBeOnTheScreen();
+    expect(screen.getAllByRole('button', { name: '添加衣物' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '查看衣橱洞察' })).toBeOnTheScreen();
   });
 
   it('造型页显示标题与空状态主操作', () => {

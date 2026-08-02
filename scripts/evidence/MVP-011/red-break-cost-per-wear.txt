@@ -1,0 +1,60 @@
+      316 |     // g2：19900 / 2 = 9950
+      317 |     expect(byId.get('g2')!.costPerWearMinor).toBe(9950);
+
+      at Object.toBeNull (src/core/insights/insightsService.test.ts:314:46)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+FAIL src/core/insights/metrics.test.ts
+  ● computeCostPerWearList（成本/次，复用 MVP-007 口径） › 价格÷次数向下取整到分；按成本/次升序，null 排后；归档保留历史贡献
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 1
+
+      Array [
+        "g1",
+        "g5",
+        "g8",
+        "g7",
+    +   "g4",
+        "g3",
+        "g2",
+    -   "g4",
+        "g6",
+      ]
+
+      226 |     // 期望顺序：g1(6633), g5(8000), g8(10000,archived), g7(12000), g3(50000), g2(null), g4(null), g6(null)
+      227 |     const ids = rows.map((r) => r.garmentId);
+    > 228 |     expect(ids).toEqual(['g1', 'g5', 'g8', 'g7', 'g3', 'g2', 'g4', 'g6']);
+          |                 ^
+      229 |     const byId = new Map(rows.map((r) => [r.garmentId, r]));
+      230 |     expect(byId.get('g1')!.costPerWearMinor).toBe(6633); // 19900/3=6633.33→6633
+      231 |     expect(byId.get('g5')!.costPerWearMinor).toBe(8000);
+
+      at Object.toEqual (src/core/insights/metrics.test.ts:228:17)
+
+  ● computeCostPerWearList（成本/次，复用 MVP-007 口径） › 无价格 / 价格 0 / 0 次均返回 null（不显示伪造数值）
+
+    expect(received).toBeNull()
+
+    Received: 30000
+
+      242 |     expect(byId.get('g2')!.costPerWearMinor).toBeNull(); // 无价格
+      243 |     expect(byId.get('g6')!.costPerWearMinor).toBeNull(); // 价格 0
+    > 244 |     expect(byId.get('g4')!.costPerWearMinor).toBeNull(); // 0 次
+          |                                              ^
+      245 |     expect(byId.get('g4')!.timesWorn).toBe(0);
+      246 |   });
+      247 |
+
+      at Object.toBeNull (src/core/insights/metrics.test.ts:244:46)
+
+Test Suites: 2 failed, 2 total
+Tests:       3 failed, 34 passed, 37 total
+Snapshots:   0 total
+Time:        1.522 s, estimated 2 s
+Ran all test suites matching /src\\core\\insights/i.
+[ELIFECYCLE] Test failed. See above for more details.
+[WARN]  Local package.json exists, but node_modules missing, did you mean to install?

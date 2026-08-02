@@ -9,8 +9,14 @@ import type {
   LookMode,
   LookRow,
   LookSlot,
+  PackingItemKind,
+  PackingItemRow,
   PlanRow,
   TagKind,
+  TripOutfitRow,
+  TripRow,
+  TripStatus,
+  TripTemplateRow,
 } from './schema';
 import { listByStatus, type AnyDb } from './queue';
 
@@ -119,6 +125,42 @@ export interface GarmentDbOps {
   updatePlan(id: string, fields: Partial<PlanRow>): Promise<void>;
   getAllPlans(): Promise<PlanRow[]>;
   deleteAllPlans(): Promise<void>;
+  // 旅行（MVP-010）。
+  insertTrip(row: TripRow): Promise<void>;
+  getTrip(id: string): Promise<TripRow | null>;
+  /** 活动旅行（排除墓碑），按 updatedAt 倒序。 */
+  listActiveTrips(): Promise<TripRow[]>;
+  updateTrip(id: string, fields: Partial<TripRow>): Promise<void>;
+  getAllTrips(): Promise<TripRow[]>;
+  deleteAllTrips(): Promise<void>;
+  // 旅行内每日造型安排。
+  insertTripOutfit(row: TripOutfitRow): Promise<void>;
+  getTripOutfit(id: string): Promise<TripOutfitRow | null>;
+  /** 某旅行的活动安排（排除墓碑），按 (date, createdAt) 升序。 */
+  listActiveTripOutfits(tripId: string): Promise<TripOutfitRow[]>;
+  updateTripOutfit(id: string, fields: Partial<TripOutfitRow>): Promise<void>;
+  getAllTripOutfits(): Promise<TripOutfitRow[]>;
+  deleteAllTripOutfits(): Promise<void>;
+  // 打包清单项。
+  insertPackingItem(row: PackingItemRow): Promise<void>;
+  getPackingItem(id: string): Promise<PackingItemRow | null>;
+  /** 某旅行的全部清单项（含已勾选/未勾选），按 (kind, ord) 升序。 */
+  listPackingItemsByTrip(tripId: string): Promise<PackingItemRow[]>;
+  updatePackingItem(id: string, fields: Partial<PackingItemRow>): Promise<void>;
+  /** hard delete：garment 项不再被使用时移除；manual 项用户删除时移除。 */
+  deletePackingItem(id: string): Promise<void>;
+  /** 按 trip 清空（replaceAll 用）。 */
+  deletePackingItemsByTrip(tripId: string): Promise<void>;
+  getAllPackingItems(): Promise<PackingItemRow[]>;
+  deleteAllPackingItems(): Promise<void>;
+  // 旅行模板。
+  insertTripTemplate(row: TripTemplateRow): Promise<void>;
+  getTripTemplate(id: string): Promise<TripTemplateRow | null>;
+  /** 活动模板（排除墓碑），按 updatedAt 倒序。 */
+  listActiveTripTemplates(): Promise<TripTemplateRow[]>;
+  updateTripTemplate(id: string, fields: Partial<TripTemplateRow>): Promise<void>;
+  getAllTripTemplates(): Promise<TripTemplateRow[]>;
+  deleteAllTripTemplates(): Promise<void>;
   getMetaInt(key: string): Promise<number | null>;
   setMetaInt(key: string, value: number): Promise<void>;
   getMeta(key: string): Promise<string | null>;
@@ -140,10 +182,15 @@ export interface GarmentDump {
   lookItems?: LookItemRow[];
   /** MVP-009 起写入；v1–v6 旧镜像无此字段，回灌按空处理。 */
   plans?: PlanRow[];
+  /** MVP-010 起写入；v1–v7 旧镜像无此字段，回灌按空处理。 */
+  trips?: TripRow[];
+  tripOutfits?: TripOutfitRow[];
+  packingItems?: PackingItemRow[];
+  tripTemplates?: TripTemplateRow[];
 }
 
 export async function dumpAll(db: GarmentDb): Promise<GarmentDump> {
-  const [garments, assets, tags, statusEvents, looks, lookItems, plans] = await Promise.all([
+  const [garments, assets, tags, statusEvents, looks, lookItems, plans, trips, tripOutfits, packingItems, tripTemplates] = await Promise.all([
     db.listAllGarments(),
     db.getAllAssets(),
     db.getAllTags(),
@@ -151,13 +198,21 @@ export async function dumpAll(db: GarmentDb): Promise<GarmentDump> {
     db.getAllLooks(),
     db.getAllLookItems(),
     db.getAllPlans(),
+    db.getAllTrips(),
+    db.getAllTripOutfits(),
+    db.getAllPackingItems(),
+    db.getAllTripTemplates(),
   ]);
-  return { garments, assets, tags, statusEvents, looks, lookItems, plans };
+  return { garments, assets, tags, statusEvents, looks, lookItems, plans, trips, tripOutfits, packingItems, tripTemplates };
 }
 
 /** 用镜像全量替换当前数据（事务内清空再插入）。用于启动时从持久镜像回灌。 */
 export async function replaceAll(db: GarmentDb, dump: GarmentDump): Promise<void> {
   await db.transaction(async (tx) => {
+    await tx.deleteAllTripTemplates();
+    await tx.deleteAllPackingItems();
+    await tx.deleteAllTripOutfits();
+    await tx.deleteAllTrips();
     await tx.deleteAllPlans();
     await tx.deleteAllLookItems();
     await tx.deleteAllLooks();
@@ -172,6 +227,10 @@ export async function replaceAll(db: GarmentDb, dump: GarmentDump): Promise<void
     for (const l of dump.looks ?? []) await tx.insertLook(l);
     if ((dump.lookItems ?? []).length > 0) await tx.insertLookItems(dump.lookItems ?? []);
     for (const p of dump.plans ?? []) await tx.insertPlan(p);
+    for (const tr of dump.trips ?? []) await tx.insertTrip(tr);
+    for (const to of dump.tripOutfits ?? []) await tx.insertTripOutfit(to);
+    for (const pi of dump.packingItems ?? []) await tx.insertPackingItem(pi);
+    for (const tp of dump.tripTemplates ?? []) await tx.insertTripTemplate(tp);
   });
 }
 
@@ -495,6 +554,359 @@ export function planOutfitIds(plan: PlanRow): string[] {
   try {
     const v: unknown = JSON.parse(plan.outfitJson);
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/* ---------------- MVP-010：旅行（trips / trip_outfits / packing_items / trip_templates） ---------------- */
+
+/** 旅行详情：行 + 解析后的活动列表 + 天气快照（均可空容错）。 */
+export interface TripDetail {
+  trip: TripRow;
+  activities: { date: string; timeLabel: string; note?: string | null }[];
+  weatherSnapshot: {
+    fetchedAt: number;
+    minTempC: number;
+    maxTempC: number;
+    conditionCode: string;
+    provider: string;
+    cityName: string;
+  } | null;
+}
+
+/** tripOutfit 详情：行 + 快照单品 + 关联造型缺失标记（修复入口依据）。 */
+export interface TripOutfitDetail {
+  tripOutfit: TripOutfitRow;
+  outfitGarmentIds: string[];
+  /** 关联造型已墓碑/不存在 → true（安排仍由快照支撑展示）。 */
+  lookMissing: boolean;
+}
+
+export interface CreateTripInput {
+  id: string;
+  name: string;
+  destination: string;
+  startDate: string;
+  endDate: string;
+  timeZone: string;
+  activities: readonly { date: string; timeLabel: string; note?: string | null }[];
+  weatherSnapshot?: { fetchedAt: number; minTempC: number; maxTempC: number; conditionCode: string; provider: string; cityName: string } | null;
+  status?: TripStatus;
+  now: number;
+}
+
+export async function createTrip(db: GarmentDb, input: CreateTripInput): Promise<void> {
+  const row: TripRow = {
+    id: input.id,
+    name: input.name,
+    destination: input.destination,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    timeZone: input.timeZone,
+    activitiesJson: JSON.stringify(input.activities),
+    weatherSnapshotJson: input.weatherSnapshot ? JSON.stringify(input.weatherSnapshot) : null,
+    status: input.status ?? 'planning',
+    createdAt: input.now,
+    updatedAt: input.now,
+    deletedAt: null,
+  };
+  await db.transaction(async (tx) => {
+    await tx.insertTrip(row);
+  });
+}
+
+export interface UpdateTripInput {
+  name?: string;
+  destination?: string;
+  startDate?: string;
+  endDate?: string;
+  timeZone?: string;
+  activities?: readonly { date: string; timeLabel: string; note?: string | null }[];
+  weatherSnapshot?: { fetchedAt: number; minTempC: number; maxTempC: number; conditionCode: string; provider: string; cityName: string } | null;
+  status?: TripStatus;
+}
+
+export async function updateTripRow(db: GarmentDb, id: string, patch: UpdateTripInput, now: number): Promise<void> {
+  const fields: Partial<TripRow> = { updatedAt: now };
+  if (patch.name !== undefined) fields.name = patch.name;
+  if (patch.destination !== undefined) fields.destination = patch.destination;
+  if (patch.startDate !== undefined) fields.startDate = patch.startDate;
+  if (patch.endDate !== undefined) fields.endDate = patch.endDate;
+  if (patch.timeZone !== undefined) fields.timeZone = patch.timeZone;
+  if (patch.activities !== undefined) fields.activitiesJson = JSON.stringify(patch.activities);
+  if (patch.weatherSnapshot !== undefined) {
+    fields.weatherSnapshotJson = patch.weatherSnapshot ? JSON.stringify(patch.weatherSnapshot) : null;
+  }
+  if (patch.status !== undefined) fields.status = patch.status;
+  await db.transaction(async (tx) => {
+    await tx.updateTrip(id, fields);
+  });
+}
+
+/** 软删旅行：仅置墓碑，行保留。 */
+export async function softDeleteTrip(db: GarmentDb, id: string, now: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.updateTrip(id, { deletedAt: now, updatedAt: now });
+  });
+}
+
+/** activities_json 解析：坏 JSON/非数组按空数组（不崩）。 */
+export function tripActivities(trip: TripRow): { date: string; timeLabel: string; note?: string | null }[] {
+  try {
+    const v: unknown = JSON.parse(trip.activitiesJson);
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+      .map((x) => ({
+        date: typeof x.date === 'string' ? x.date : '',
+        timeLabel: typeof x.timeLabel === 'string' ? x.timeLabel : '',
+        note: typeof x.note === 'string' ? x.note : null,
+      }))
+      .filter((x) => x.date && x.timeLabel);
+  } catch {
+    return [];
+  }
+}
+
+/** weather_snapshot_json 解析：坏 JSON 按无快照（不崩）。 */
+export function tripWeatherSnapshot(trip: TripRow): {
+  fetchedAt: number;
+  minTempC: number;
+  maxTempC: number;
+  conditionCode: string;
+  provider: string;
+  cityName: string;
+} | null {
+  if (!trip.weatherSnapshotJson) return null;
+  try {
+    const v: unknown = JSON.parse(trip.weatherSnapshotJson);
+    if (typeof v !== 'object' || v === null) return null;
+    const o = v as Record<string, unknown>;
+    return {
+      fetchedAt: typeof o.fetchedAt === 'number' ? o.fetchedAt : 0,
+      minTempC: typeof o.minTempC === 'number' ? o.minTempC : 0,
+      maxTempC: typeof o.maxTempC === 'number' ? o.maxTempC : 0,
+      conditionCode: typeof o.conditionCode === 'string' ? o.conditionCode : '',
+      provider: typeof o.provider === 'string' ? o.provider : '',
+      cityName: typeof o.cityName === 'string' ? o.cityName : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/* ----- trip_outfits ----- */
+
+export interface CreateTripOutfitInput {
+  id: string;
+  tripId: string;
+  date: string;
+  timeLabel: string;
+  occasion?: string | null;
+  lookId?: string | null;
+  outfitGarmentIds: readonly string[];
+  note?: string | null;
+  now: number;
+}
+
+export async function createTripOutfit(db: GarmentDb, input: CreateTripOutfitInput): Promise<void> {
+  const row: TripOutfitRow = {
+    id: input.id,
+    tripId: input.tripId,
+    date: input.date,
+    timeLabel: input.timeLabel,
+    occasion: input.occasion ?? null,
+    lookId: input.lookId ?? null,
+    outfitJson: JSON.stringify(input.outfitGarmentIds),
+    note: input.note ?? null,
+    wornStatus: 'planned',
+    wornCompletedAt: null,
+    wornChangeNote: null,
+    createdAt: input.now,
+    updatedAt: input.now,
+    deletedAt: null,
+  };
+  await db.transaction(async (tx) => {
+    await tx.insertTripOutfit(row);
+  });
+}
+
+export interface UpdateTripOutfitInput {
+  date?: string;
+  timeLabel?: string;
+  occasion?: string | null;
+  lookId?: string | null;
+  outfitGarmentIds?: readonly string[];
+  note?: string | null;
+  wornStatus?: TripOutfitRow['wornStatus'];
+  wornCompletedAt?: number | null;
+  wornChangeNote?: string | null;
+}
+
+export async function updateTripOutfitRow(
+  db: GarmentDb,
+  id: string,
+  patch: UpdateTripOutfitInput,
+  now: number,
+): Promise<void> {
+  const fields: Partial<TripOutfitRow> = { updatedAt: now };
+  if (patch.date !== undefined) fields.date = patch.date;
+  if (patch.timeLabel !== undefined) fields.timeLabel = patch.timeLabel;
+  if (patch.occasion !== undefined) fields.occasion = patch.occasion;
+  if (patch.lookId !== undefined) fields.lookId = patch.lookId;
+  if (patch.outfitGarmentIds !== undefined) fields.outfitJson = JSON.stringify(patch.outfitGarmentIds);
+  if (patch.note !== undefined) fields.note = patch.note;
+  if (patch.wornStatus !== undefined) fields.wornStatus = patch.wornStatus;
+  if (patch.wornCompletedAt !== undefined) fields.wornCompletedAt = patch.wornCompletedAt;
+  if (patch.wornChangeNote !== undefined) fields.wornChangeNote = patch.wornChangeNote;
+  await db.transaction(async (tx) => {
+    await tx.updateTripOutfit(id, fields);
+  });
+}
+
+/** 软删 tripOutfit：仅置墓碑，行保留；绝不动关联造型。 */
+export async function softDeleteTripOutfit(db: GarmentDb, id: string, now: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.updateTripOutfit(id, { deletedAt: now, updatedAt: now });
+  });
+}
+
+/** tripOutfit 快照解析：坏 JSON/非数组按空快照（不崩，行仍在）。 */
+export function tripOutfitIds(to: TripOutfitRow): string[] {
+  try {
+    const v: unknown = JSON.parse(to.outfitJson);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/* ----- packing_items ----- */
+
+export interface CreatePackingItemInput {
+  id: string;
+  tripId: string;
+  kind: PackingItemKind;
+  garmentId?: string | null;
+  label: string;
+  sourceCount?: number;
+  sourceOutfitIds?: readonly string[];
+  checked?: boolean;
+  checkedAt?: number | null;
+  ord: number;
+  now: number;
+}
+
+export async function createPackingItem(db: GarmentDb, input: CreatePackingItemInput): Promise<void> {
+  const row: PackingItemRow = {
+    id: input.id,
+    tripId: input.tripId,
+    kind: input.kind,
+    garmentId: input.garmentId ?? null,
+    label: input.label,
+    sourceCount: input.sourceCount ?? 0,
+    sourceOutfitIdsJson: JSON.stringify(input.sourceOutfitIds ?? []),
+    checked: input.checked ? 1 : 0,
+    checkedAt: input.checkedAt ?? null,
+    ord: input.ord,
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
+  await db.transaction(async (tx) => {
+    await tx.insertPackingItem(row);
+  });
+}
+
+export interface UpdatePackingItemInput {
+  label?: string;
+  sourceCount?: number;
+  sourceOutfitIds?: readonly string[];
+  checked?: boolean;
+  checkedAt?: number | null;
+  ord?: number;
+}
+
+export async function updatePackingItemRow(
+  db: GarmentDb,
+  id: string,
+  patch: UpdatePackingItemInput,
+  now: number,
+): Promise<void> {
+  const fields: Partial<PackingItemRow> = { updatedAt: now };
+  if (patch.label !== undefined) fields.label = patch.label;
+  if (patch.sourceCount !== undefined) fields.sourceCount = patch.sourceCount;
+  if (patch.sourceOutfitIds !== undefined) fields.sourceOutfitIdsJson = JSON.stringify(patch.sourceOutfitIds);
+  if (patch.checked !== undefined) fields.checked = patch.checked ? 1 : 0;
+  if (patch.checkedAt !== undefined) fields.checkedAt = patch.checkedAt;
+  if (patch.ord !== undefined) fields.ord = patch.ord;
+  await db.transaction(async (tx) => {
+    await tx.updatePackingItem(id, fields);
+  });
+}
+
+/** hard delete packing_item（garment 项不再被使用 / manual 项用户删除）。 */
+export async function deletePackingItemRow(db: GarmentDb, id: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.deletePackingItem(id);
+  });
+}
+
+/** packing_item.source_outfit_ids_json 解析：坏 JSON 按空数组。 */
+export function packingItemSourceOutfitIds(item: PackingItemRow): string[] {
+  try {
+    const v: unknown = JSON.parse(item.sourceOutfitIdsJson);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/* ----- trip_templates ----- */
+
+export interface CreateTripTemplateInput {
+  id: string;
+  name: string;
+  sourceTripId?: string | null;
+  items: readonly { kind: PackingItemKind; label: string; garmentId?: string | null }[];
+  now: number;
+}
+
+export async function createTripTemplate(db: GarmentDb, input: CreateTripTemplateInput): Promise<void> {
+  const row: TripTemplateRow = {
+    id: input.id,
+    name: input.name,
+    sourceTripId: input.sourceTripId ?? null,
+    itemsJson: JSON.stringify(input.items),
+    createdAt: input.now,
+    updatedAt: input.now,
+    deletedAt: null,
+  };
+  await db.transaction(async (tx) => {
+    await tx.insertTripTemplate(row);
+  });
+}
+
+/** 软删模板：仅置墓碑，行保留。 */
+export async function softDeleteTripTemplate(db: GarmentDb, id: string, now: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.updateTripTemplate(id, { deletedAt: now, updatedAt: now });
+  });
+}
+
+/** items_json 解析：坏 JSON 按空数组。 */
+export function tripTemplateItems(t: TripTemplateRow): { kind: PackingItemKind; label: string; garmentId?: string | null }[] {
+  try {
+    const v: unknown = JSON.parse(t.itemsJson);
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+      .map((x) => ({
+        kind: (typeof x.kind === 'string' && (x.kind === 'garment' || x.kind === 'manual') ? x.kind : 'manual') as PackingItemKind,
+        label: typeof x.label === 'string' ? x.label : '',
+        garmentId: typeof x.garmentId === 'string' ? x.garmentId : null,
+      }))
+      .filter((x) => x.label);
   } catch {
     return [];
   }

@@ -16,14 +16,14 @@
 10. [MVP-009 日历计划](MVP-009-calendar-planning.md)
 11. [MVP-010 旅行打包](MVP-010-trip-packing.md)
 12. [MVP-011 衣橱洞察](MVP-011-insights.md)
-13. [MVP-012 购物守门](MVP-012-shopping-guard.md)
-14. [MVP-013 隐私、导出与恢复](MVP-013-privacy-export-restore.md)
-15. [MVP-014 Android 发布验收](MVP-014-android-release.md)
+13. [MVP-014 Android 发布验收](MVP-014-android-release.md)
 
 ## P1
 
-1. [P1-001 可选多设备同步](P1-001-managed-sync.md)
-2. [P1-002 iOS 发布](P1-002-ios-release.md)
+1. [MVP-012 购物守门](MVP-012-shopping-guard.md)（原 P0，2026-08-02 降级）
+2. [MVP-013 隐私、导出与恢复](MVP-013-privacy-export-restore.md)（原 P0，2026-08-02 降级）
+3. [P1-001 可选多设备同步](P1-001-managed-sync.md)
+4. [P1-002 iOS 发布](P1-002-ios-release.md)
 
 ## 每卡固定交付
 
