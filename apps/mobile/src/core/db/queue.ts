@@ -11,7 +11,7 @@ import { cutoutJobs, maskStrokes, type CutoutJobRow, type MaskStrokeRow } from '
  * 设备传 drizzle(expo-sqlite)，测试传 drizzle(better-sqlite3)，查询构建器调用一致。
  */
 
-type AnyDb = ExpoSQLiteDatabase<typeof schema> | BetterSQLite3Database<typeof schema>;
+export type AnyDb = ExpoSQLiteDatabase<typeof schema> | BetterSQLite3Database<typeof schema>;
 
 export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export const TERMINAL_STATUSES: readonly JobStatus[] = ['succeeded', 'failed', 'cancelled'];
@@ -118,6 +118,29 @@ export async function markFailed(
 
 export async function cancel(db: AnyDb, id: string, now: number): Promise<void> {
   await db.update(cutoutJobs).set({ status: 'cancelled', updatedAt: now }).where(eq(cutoutJobs.id, id));
+}
+
+/**
+ * 网络/临时失败复位：running → pending，保留 attempts 计数（计重试），不进入 failed。
+ * 与 markFailed 的区别：临时失败不消耗 maxAttempts 预算，联网后由 drain 续跑。
+ */
+export async function requeuePending(db: AnyDb, id: string, errorCode: string, errorMessage: string, now: number): Promise<void> {
+  await db
+    .update(cutoutJobs)
+    .set({ status: 'pending', errorCode, errorMessage, updatedAt: now })
+    .where(eq(cutoutJobs.id, id));
+}
+
+/** 手动重试：failed → pending，重置 attempts 与错误信息（用户点击重试 = 新的重试预算）。返回复位条数。 */
+export async function requeueFailed(db: AnyDb, now: number): Promise<number> {
+  const failed = await listByStatus(db, 'failed');
+  for (const job of failed) {
+    await db
+      .update(cutoutJobs)
+      .set({ status: 'pending', attempts: 0, errorCode: null, errorMessage: null, updatedAt: now })
+      .where(eq(cutoutJobs.id, job.id));
+  }
+  return failed.length;
 }
 
 /** 恢复：异常 running → pending（杀进程/低内存后调用）。返回复位条数。 */

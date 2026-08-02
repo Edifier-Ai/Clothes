@@ -1,0 +1,7 @@
+PASS src/core/plan/planService.test.ts
+PASS src/core/plan/calendar.test.ts
+
+Test Suites: 2 passed, 2 total
+Tests:       24 passed, 24 total
+Snapshots:   0 total
+Time:        0.803 s, estimated 1 s

@@ -5,8 +5,8 @@
  * 并产出真实 alpha 蒙版作为 ground truth，使基准可在无真图时复跑（卡片因此 BLOCKED，
  * 见 BLOCKED.md B-5；真图到位后替换 fixtures 即可复用同一管线）。
  */
+import { Buffer } from 'buffer';
 import { PNG } from 'pngjs';
-import type { Buffer } from 'buffer';
 
 export interface RGBA {
   width: number;

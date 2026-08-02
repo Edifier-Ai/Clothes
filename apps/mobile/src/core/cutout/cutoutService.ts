@@ -2,13 +2,12 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { AppDb } from '../db/expoDb';
-import { openAppDb } from '../db/expoDb';
 import { garmentAssets, garments } from '../db/schema';
-import { enqueue } from '../db/queue';
-import { StubSegmentationEngine } from '../../native/segmentationEngine';
+import { enqueue, listByStatus, requeueFailed } from '../db/queue';
 import { devicePixelReader } from './devicePixelReader';
 import { makeDeviceIO } from './deviceIO';
-import { drain, recover, snapshot, type QueueSnapshot } from './processor';
+import { resolveCutoutEngine } from './engineResolver';
+import { drain, recover, snapshot, TRANSIENT_ERROR_NAMES, type QueueSnapshot } from './processor';
 import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 import { uuidv7 } from '../id/uuidv7';
 
@@ -46,10 +45,20 @@ export async function enqueueBatch(app: AppDb, picked: PickedForBatch[]): Promis
     const p = picked[i];
     const gid = uuidv7();
     const jid = uuidv7();
-    const stagedRel = `_staging/${jid}.${p.ext.replace(/^\./, '')}`;
+    const ext = p.ext.replace(/^\./, '');
+    const stagedRel = `_staging/${jid}.${ext}`;
     const stagedAbs = `${rootAbs()}/${stagedRel}`;
     await FileSystem.makeDirectoryAsync(`${rootAbs()}/_staging`, { intermediates: true });
     await FileSystem.copyAsync({ from: p.uri, to: stagedAbs });
+    // 原图入队即提交到 originals/（不存在才写，绝不覆盖）：抠图待处理/失败时详情仍可见原图
+    const originalRel = `originals/${gid}.${ext}`;
+    const originalAbs = `${rootAbs()}/${originalRel}`;
+    await FileSystem.makeDirectoryAsync(`${rootAbs()}/originals`, { intermediates: true });
+    const oinfo = await FileSystem.getInfoAsync(originalAbs);
+    if (!oinfo.exists) await FileSystem.copyAsync({ from: stagedAbs, to: originalAbs });
+    const b64 = await FileSystem.readAsStringAsync(originalAbs, { encoding: FileSystem.EncodingType.Base64 });
+    const sha256 = p.sha256 ?? (await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, b64));
+    const dim = await FileSystem.getInfoAsync(originalAbs);
     await app.drizzleDb.insert(garments).values({
       id: gid,
       name: `衣物 ${i + 1}`,
@@ -63,7 +72,18 @@ export async function enqueueBatch(app: AppDb, picked: PickedForBatch[]): Promis
       createdAt: now,
       updatedAt: now,
     });
-    await enqueue(app.drizzleDb, { id: jid, garmentId: gid, sourceStagedPath: stagedAbs, sha256: p.sha256, now });
+    await app.drizzleDb.insert(garmentAssets).values({
+      id: uuidv7(),
+      garmentId: gid,
+      originalRelPath: originalRel,
+      sha256,
+      width: 0, // 未知（入队阶段不解码；不伪造）
+      height: 0,
+      bytes: dim.exists && 'size' in dim ? (dim.size ?? 0) : 0,
+      mimeType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+      createdAt: now,
+    });
+    await enqueue(app.drizzleDb, { id: jid, garmentId: gid, sourceStagedPath: stagedAbs, sha256, now });
     garmentIds.push(gid);
     jobIds.push(jid);
   }
@@ -120,10 +140,14 @@ export async function addOriginalOnly(
   return gid;
 }
 
-/** 启动顺序处理（并发 1）；启动先 recover 中断任务。每张完成写镜像。 */
+/**
+ * 启动顺序处理（并发 1）；启动先 recover 中断任务。每张完成写镜像。
+ * 引擎经 resolveCutoutEngine 选择：凭证+上传告知齐全 → TencentCiEngine；
+ * 否则引擎不可用，任务保持 pending（不标 failed、不伪造蒙版）。
+ */
 export async function startProcessing(app: AppDb, onProgress?: (s: QueueSnapshot) => void): Promise<number> {
   const io = makeDeviceIO(rootAbs());
-  const engine = new StubSegmentationEngine(devicePixelReader);
+  const { engine } = await resolveCutoutEngine({ readPixels: devicePixelReader });
   await recover({ db: app.drizzleDb, engine, io, extForJob: () => 'png' });
   const wrapped = onProgress
     ? (s: QueueSnapshot) => {
@@ -136,9 +160,22 @@ export async function startProcessing(app: AppDb, onProgress?: (s: QueueSnapshot
   return n;
 }
 
+/** 手动重试失败项：failed → pending（重置重试预算）后续跑队列。 */
+export async function retryFailed(app: AppDb, onProgress?: (s: QueueSnapshot) => void): Promise<number> {
+  await requeueFailed(app.drizzleDb, Date.now());
+  await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
+  return startProcessing(app, onProgress);
+}
+
+/** 因断网/临时错误回 pending 等待重试的任务数（errorCode 命中临时错误约定）。 */
+export async function countNetworkPending(app: AppDb): Promise<number> {
+  const pending = await listByStatus(app.drizzleDb, 'pending');
+  return pending.filter((j) => j.errorCode !== null && TRANSIENT_ERROR_NAMES.includes(j.errorCode)).length;
+}
+
 export async function getSnapshot(app: AppDb): Promise<QueueSnapshot> {
   const io = makeDeviceIO(rootAbs());
-  const engine = new StubSegmentationEngine(devicePixelReader);
+  const { engine } = await resolveCutoutEngine({ readPixels: devicePixelReader });
   return snapshot({ db: app.drizzleDb, engine, io, extForJob: () => 'png' });
 }
 

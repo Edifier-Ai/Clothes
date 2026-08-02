@@ -1,20 +1,16 @@
-import type { SkImage } from '@shopify/react-native-skia';
 import { useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 
-// pngjs 懒 require：RN 运行时不含 Node builtins，顶层 import 会破坏主 bundle；修边页本就 B-6 阻塞。
-type PngJs = typeof import('pngjs');
-function pngjs(): PngJs {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('pngjs') as PngJs;
-}
+import { decodePng, decodeSkImage, encodeAlphaPng, type SkImageT } from '@/native/skiaPngCodec';
 
 import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
 import { appendStroke, listStrokes, nextOrd, popLastStroke, listByGarment } from '@/core/db/queue';
 import { getJob } from '@/core/cutout/processor';
+import { rebuildDerived } from '@/core/cutout/pipelineCore';
+import { makeDeviceIO } from '@/core/cutout/deviceIO';
 import { writeMirror } from '@/core/garments/mirror';
 import { uuidv7 } from '@/core/id/uuidv7';
 
@@ -33,27 +29,23 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-function decodeMaskPng(b64: string): { alpha: Uint8Array; w: number; h: number } {
-  const png = pngjs().PNG.sync.read(Buffer.from(base64ToBytes(b64)));
-  const alpha = new Uint8Array(png.width * png.height);
-  for (let i = 0; i < alpha.length; i++) alpha[i] = png.data[i * 4];
-  return { alpha, w: png.width, h: png.height };
-}
-
-function encodeMaskPng(alpha: Uint8Array, w: number, h: number): string {
-  const { PNG } = pngjs();
-  const png = new PNG({ width: w, height: h });
-  for (let i = 0; i < w * h; i++) {
-    png.data[i * 4] = alpha[i];
-    png.data[i * 4 + 1] = alpha[i];
-    png.data[i * 4 + 2] = alpha[i];
-    png.data[i * 4 + 3] = 255;
-  }
-  const bytes = pngjs().PNG.sync.write(png);
+function bytesToBase64(bytes: Uint8Array): string {
   let bin = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
   return btoa(bin);
+}
+
+/** 蒙版 PNG → 单通道 alpha（蒙版为灰度图，R 通道即 alpha；Skia 解码，见 skiaPngCodec）。 */
+function decodeMaskPng(b64: string): { alpha: Uint8Array; w: number; h: number } {
+  const { rgba, w, h } = decodePng(base64ToBytes(b64));
+  const alpha = new Uint8Array(w * h);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4];
+  return { alpha, w, h };
+}
+
+function encodeMaskPng(alpha: Uint8Array, w: number, h: number): string {
+  return bytesToBase64(encodeAlphaPng(alpha, w, h));
 }
 
 /** 模块级时间戳助手，避免 react-compiler 把渲染内联 Date.now 视为 impure。 */
@@ -61,39 +53,16 @@ function now(): number {
   return Date.now();
 }
 
-interface SkiaCanvasProps {
-  imageUri: string | null;
-  w: number;
-  h: number;
-  scale: number;
-  offset: { x: number; y: number };
-  bg: Bg;
-  overlay: Array<{ x: number; y: number; w: number; h: number }>;
-  tick: number;
-}
-
 /**
- * 懒加载 Skia 画布：Skia 通过 require 在此组件内加载，Metro 把它拆到独立 chunk，
- * 启动主 bundle 不加载 Skia 原生模块，避免 B-6（Skia 未链接）连带崩溃其它路由。
- * 仅当导航到修边页渲染本组件时才 require Skia。
+ * 懒加载 Skia 画布：独立模块（features/cutout/SkiaCanvas）经动态 import 拆 chunk，
+ * 启动主 bundle 不加载 Skia 原生模块（历史原因 B-6；现 Skia 2.10 已链接进 APK，
+ * 保留懒加载以维持启动包体积与既有行为）。仅当导航到修边页渲染本组件时才加载。
+ *
+ * 注意：曾在 lazy 回调里内联 require('@shopify/react-native-skia') 并解构出组件，
+ * React Compiler 下运行时丢闭包变量（ReferenceError: Property 'Rect' doesn't exist，
+ * 2026-08-01 真机实测），故改为标准 React.lazy + 动态 import 静态模块。
  */
-const SkiaCanvas = lazy(async () => {
-  const Skia = require('@shopify/react-native-skia') as typeof import('@shopify/react-native-skia');
-  const { Canvas, Image: SkiaImage, Rect, useImage } = Skia;
-  const Comp = ({ imageUri, w, h, scale, offset, bg, overlay, tick }: SkiaCanvasProps) => {
-    const origImg = useImage(imageUri) as SkImage | null;
-    return (
-      <Canvas style={{ flex: 1 }} key={tick}>
-        <Rect x={0} y={0} width={w} height={h} color={bg === 'checker' ? '#e8e8e8' : '#ffffff'} />
-        {origImg ? <SkiaImage image={origImg} x={offset.x} y={offset.y} width={w * scale} height={h * scale} fit="fill" /> : null}
-        {overlay.map((r, i) => (
-          <Rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} color="#7A2E3A66" />
-        ))}
-      </Canvas>
-    );
-  };
-  return { default: Comp };
-});
+const SkiaCanvas = lazy(() => import('@/features/cutout/SkiaCanvas'));
 
 function applyStroke(mask: Uint8Array, w: number, h: number, pts: number[], size: number, op: Mode): void {
   const val = op === 'erase' ? 0 : 255;
@@ -125,6 +94,7 @@ export default function CutoutEditorScreen() {
   const [tool, setTool] = useState<Tool>('brush');
   const [brush, setBrush] = useState(12);
   const [info, setInfo] = useState('加载中…');
+  const [origImg, setOrigImg] = useState<SkImageT | null>(null);
   const maskRef = useRef<Uint8Array | null>(null);
   const [maskW, setMaskW] = useState(0);
   const [maskH, setMaskH] = useState(0);
@@ -174,6 +144,9 @@ export default function CutoutEditorScreen() {
       maskRef.current = alpha;
       setMaskW(w);
       setMaskH(h);
+      // 原图经 JSI 解码成 SkImage 传入画布（Skia v2 useImage 对 file:// 真机不可靠）
+      const ob64 = await FileSystem.readAsStringAsync(`${rootRef.current}/${sj.originalRelPath}`, { encoding: FileSystem.EncodingType.Base64 });
+      setOrigImg(decodeSkImage(base64ToBytes(ob64)));
       setTick((t) => t + 1);
       setInfo(`蒙版 ${w}×${h} · 操作 ${strokes.length}`);
     })();
@@ -243,6 +216,7 @@ export default function CutoutEditorScreen() {
     for (const s of strokes) applyStroke(alpha, w, h, JSON.parse(s.pointsJson) as number[], s.brushSize, s.op as Mode);
     maskRef.current = alpha;
     setTick((t) => t + 1);
+    setInfo((s) => s.replace(/ · 操作 \d+/, '') + ` · 操作 ${strokes.length}`);
   };
 
   const save = async () => {
@@ -254,11 +228,18 @@ export default function CutoutEditorScreen() {
     await FileSystem.makeDirectoryAsync(`${rootRef.current}/_tmp`, { intermediates: true });
     await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 });
     await FileSystem.moveAsync({ from: tmp, to: maskAbs }); // 蒙版可覆盖；原图不动
+    // 透明预览/缩略图按新蒙版重建（派生图可重建）；失败不阻塞蒙版保存
+    try {
+      const ext = jobRef.current.originalRelPath.split('.').pop() ?? 'png';
+      await rebuildDerived(makeDeviceIO(rootRef.current), id, ext, 96);
+    } catch {
+      setInfo('已保存蒙版；预览重建失败，可重进修边页重试');
+      return;
+    }
     await writeMirror(rootRef.current, app.db, app.drizzleDb, Date.now());
     setInfo('已保存蒙版（原图未动）');
   };
 
-  const imageUri = jobRef.current ? `file://${rootRef.current}/${jobRef.current.originalRelPath}` : null;
   // 蒙版叠加采样（粗网格，性能）
   const STEP = 6;
   const overlay: Array<{ x: number; y: number; w: number; h: number }> = [];
@@ -314,7 +295,7 @@ export default function CutoutEditorScreen() {
       <Text style={styles.info}>{info} · 笔 {brush} · ×{scale}</Text>
       <View style={styles.canvasWrap} onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })} {...(panRef.current?.panHandlers ?? {})}>
         <Suspense fallback={<View style={styles.canvas} />}>
-          <SkiaCanvas imageUri={imageUri} w={size.w} h={size.h} scale={scale} offset={offset} bg={bg} overlay={overlay} tick={tick} />
+          <SkiaCanvas image={origImg} w={size.w} h={size.h} scale={scale} offset={offset} bg={bg} overlay={overlay} tick={tick} />
         </Suspense>
       </View>
       <Text style={styles.hint}>工具栏切换「平移/笔刷」：平移拖动画面，笔刷拖动改蒙版；＋/− 缩放；撤销回退最近一笔；保存重写蒙版，原图绝不覆盖。</Text>

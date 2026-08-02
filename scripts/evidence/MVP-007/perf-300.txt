@@ -1,0 +1,4 @@
+# 300 件夹具性能（host better-sqlite3，2026-08-01）
+    [perf] seed 300 garments: 1057ms
+    [perf] 300件 build=5ms filter=0ms sort=0ms search=0ms total=5ms
+Tests:       1 passed, 1 total

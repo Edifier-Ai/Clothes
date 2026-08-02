@@ -1,41 +1,31 @@
-# MVP-002 验收证据清单
+# MVP-002 验收证据索引
 
-日期：2026-07-28  
-状态：**BLOCKED（无真实照片）** —— 管线、清单格式、报告、反向验证、on-device 探针代码均已就绪；
-真实样本「直接可用率≥80%/严重失败≤5%」门槛须真图，故卡片不得标最终验收（见 `BLOCKED.md` B-5）。
+最后更新：2026-08-01
+状态：**BLOCKED** —— 腾讯云 GoodsMatting 的 host 真实链路、适配层与 App 接线已完成；任务卡要求的 100–200 张目标场景样本和 Android 真机终判仍未完成。
 
-## 可复跑基准管线（host，tsx + pngjs）
+## 现役实现
 
-- 清单格式：`scripts/segmentation-benchmark/.private/manifest.json`（schema 见 `generateFixtures.ts` Manifest；
-  含 id/fg/bg/edge/contrast/image/groundTruthAlpha/humanJudgement/notes；真图替换 images+ground_truth 即复用）。
-- 私有样本目录：`scripts/segmentation-benchmark/.private/`（gitignore，不入库；可复现生成）。
-- 合成夹具：`pnpm bench:fixtures` 生成 17 张（白/黑/棋盘/复杂/阴影背景 × 实边/流苏/蕾丝 × 低对比硬例 + ground truth 精确蒙版）。
-- 运行：`pnpm bench:run -- --segmenter stub --tag clean` → 逐图 `per_image.json` + 联系表 `contact_sheet.png` + `report.md/json`。
-- 校验：`pnpm bench:validate -- --tag clean` → 样本数/结果数/缺失/透明通道/耗时/汇总一致；`OK` exit 0。
-- 候选可插拔：`segmenter.ts` 的 `StubSegmenter`（Otsu+中心高斯连通域，占位）与 `OnnxSegmenter`
-  （onnxruntime-node 适配；模型/运行时缺失即 available=false，**不伪造**）。
+- 基准适配器：`scripts/segmentation-benchmark/tencentCi.ts`，执行上传时处理、下载透明 PNG、alpha 提取与 COS 源/结果对象尽力删除。
+- App 引擎：`apps/mobile/src/native/tencentCiEngine.ts`；凭证来自 expo-secure-store，上传前需明确同意，缺配置或拒绝时允许仅保存原图。
+- 队列恢复：临时网络错误回到 pending，不消耗完重试次数；失败项可重新入队。
+- 旧 ONNX/on-device 探针与 benchmark 页面已删除，不再是现役路径。
 
-## 反向验证（红→绿）
+## 已验证
 
-- RED：注入损坏 PNG（`corrupt-001`）→ 运行 → `validate --tag corrupt` 报
-  `RED: 1 errored per-image results` → **exit 3**。
-- GREEN：`bench:fixtures` 重建干净清单 → 同 tag 运行 → `validate` **OK exit 0**。
+- 真实链路冒烟（`scripts/segmentation-benchmark/smokeTencentCi.ts`）：`256×320 → e2e 686ms`，签名、上传、Pic-Operations、XML 解析、下载、alpha 提取和 COS 删除均通过。
+- 公开样本 10 张：p50 1107ms / p95 1511ms，均低于 8 秒目标。
+- 目标场景电商图 5 张人工判定：dress、longsleeve、pants、t-shirt 4/5 可直接使用；shoes 只抠出单只，为当前明确失败模式。
+- 另外 5 张 ModaNet 街拍会抠出完整人物，说明街拍穿着照不属于当前商品抠图目标场景。
+- 反向验证覆盖签名 method 大小写与 alpha 通道偏移；三处变异均触发测试失败，恢复后通过。
+- 2026-08-01 当前质量门：TypeScript exit 0；21 suites / 164 passed / 0 skipped；ESLint 0 errors / 14 warnings。
 
-## on-device 探针（onnxruntime-react-native，已集成）
+## 自动报告限制
 
-- `apps/mobile/src/native/segmentationProbe.ts`：走文件路径/二进制（`InferenceSession.create(Uint8Array)`，
-  图像像素经注入解码器，**不走 Base64 进模型**）；测 load/p50/p95/峰值内存/模型 sha256+体积；
-  模型/图/运行时缺失返回 available=false+reason。
-- 基准页 `apps/mobile/src/app/segmentation-benchmark.tsx`（deep link 可达，无模型即标 unavailable）。
-- 待办：`expo prebuild` 链接 onnxruntime-react-native + 放入真实/转换 ONNX 模型 + 注入图像解码器后，
-  在真机输出延迟；当前 APK 未链接该原生模块，探针在设备上为 unavailable（如实，非伪造）。
+`.private/results/public-10/report.*` 的自动汇总显示 0% usable / 70% severe，但不能用作产品终判：5 张电商图的 ground truth 是全零占位，5 张 ModaNet 的标注是人物身上的服装多边形，而 GoodsMatting 输出的是商品或完整人物轮廓。现阶段以人工判定作为探索证据，不把它升级为验收通过。
 
-## 质量门
+## 解锁条件
 
-- `pnpm typecheck` exit 0；`pnpm test` 37/37/0；`pnpm lint` 0 errors。
-
-## 结论与待真图项
-
-- 默认/备用模型选择、下载/包内策略、设备降级条件：需真图基准数据后定（TECH_STACK §4 候选：
-  U²-Net-p 低内存基线 / IS-Net 质量候选 / BiRefNet Lite 仅真机胜出后替换）。
-- 仍需手修边缘类型（合成 hard 例已见）：流苏/蕾丝半透明细边。
+1. 按任务卡补足 100–200 张目标场景照片，覆盖黑白衣物、蕾丝/流苏、鞋包、衣架、阴影和复杂背景，并记录来源。
+2. 用同一清单复跑 GoodsMatting，校验逐图结果、联系表、人工判定、错误与额度消耗。
+3. 在已授权的物理 Android 上跑真实上传、抠图、修边、强杀恢复和连续 12 张队列。
+4. 只有直接可用率 ≥80%、严重失败率 ≤5%、单张硬上限 15 秒且连续 12 张无静默失败，才把 MVP-002 标为 `ACCEPTED`。

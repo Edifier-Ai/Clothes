@@ -1,0 +1,7 @@
+{
+  "secretId": "AKIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "secretKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "bucket": "examplebucket-1250000000",
+  "region": "ap-guangzhou",
+  "_说明": "复制本文件为 scripts/segmentation-benchmark/.private/tencent-ci.json 并填入真实值；.private/ 已被 gitignore，不会入库。bucket 填「存储桶名称-APPID」格式，region 为存储桶所在地域。存储桶需已开通并绑定数据万象（CI），否则 GoodsMatting 调用会报错。"
+}

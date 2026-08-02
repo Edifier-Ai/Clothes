@@ -1,6 +1,7 @@
 /**
  * 可替换抠图引擎接口（TECH_STACK §4：业务层不感知具体模型）。
- * MVP-003 用 StubSegmentationEngine 跑通队列+修边+持久；MVP-002 解锁真模型后注入 ONNX 实现。
+ * 生产路径唯一引擎为腾讯云数据万象 GoodsMatting（TencentCiEngine）；
+ * StubSegmentationEngine 仅限测试，不进入生产路径。
  * 输入/输出走文件路径或二进制 Uint8Array，不走 Base64。
  */
 
@@ -25,6 +26,11 @@ export interface SegmentationEngine {
   available: boolean;
   unavailableReason?: string;
   segment(input: SegmentationInput): Promise<SegmentationOutput>;
+  /**
+   * 可选：异步刷新 available/unavailableReason（配置异步读取的引擎如 TencentCiEngine）。
+   * 处理器 drain 前调用一次；同步引擎（available 构造即确定）无需实现。
+   */
+  refreshAvailability?(): Promise<boolean>;
 }
 
 /** 读取源图像素的钩子（设备用 expo-image/Skia 解码；测试注入 pngjs 解码）。 */

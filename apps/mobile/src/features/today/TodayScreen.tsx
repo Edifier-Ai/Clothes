@@ -8,6 +8,7 @@ import { TabShell } from '@/features/shell/TabShell';
 import { openAppDb } from '@/core/db/expoDb';
 import { listActiveGarments } from '@/core/db/dao';
 import { writeMirror } from '@/core/garments/mirror';
+import { applyPostWear, getGarmentDetail, type PostWearAction } from '@/core/garments/service';
 import {
   generateRecommendation,
   REASON_LABEL,
@@ -99,6 +100,20 @@ type PanelState =
   | { kind: 'mode'; selected: RecommendationMode }
   | { kind: 'weather'; persistCity: boolean; busy: boolean; message: string | null };
 
+/** TDY-07 穿后洗护面板（内存态）：记录穿着成功后逐件选择洗护动作。 */
+interface PostWearEntry {
+  garmentId: string;
+  slotLabel: string;
+  name: string;
+}
+
+interface PostWearPanelState {
+  entries: PostWearEntry[];
+  decisions: Record<string, PostWearAction>;
+  busy: boolean;
+  error: string | null;
+}
+
 const NO_WEATHER: WeatherResolution = { status: 'none', weather: null };
 
 async function loadStoredFeedbackWeights(): Promise<Map<string, number>> {
@@ -159,6 +174,7 @@ export default function TodayScreen({
   const [feedbackWeights, setFeedbackWeights] = useState<Map<string, number>>(new Map());
   const [avoidedSignatures, setAvoidedSignatures] = useState<string[]>([]);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [postWear, setPostWear] = useState<PostWearPanelState | null>(null);
 
   const recContext = useCallback(
     (weatherValue: WeatherResolution = weather) => ({
@@ -174,6 +190,7 @@ export default function TodayScreen({
 
   const refresh = useCallback(async () => {
     setState({ kind: 'loading' });
+    setPostWear(null);
     try {
       const [loadedItems, initialWeather, weights] = await Promise.all([
         loadItems(),
@@ -214,6 +231,51 @@ export default function TodayScreen({
     });
   }, [refresh]);
 
+  /** TDY-07：记录穿着成功后打开穿后洗护面板；名称从详情服务取，失败回退 id。 */
+  const openPostWearPanel = useCallback((worn: Outfit) => {
+    const slots: { slot: RecommendationSlot; garment: GarmentForRec }[] = [
+      { slot: 'top', garment: worn.top },
+      { slot: 'bottom', garment: worn.bottom },
+      { slot: 'shoes', garment: worn.shoes },
+      ...(worn.outerwear ? [{ slot: 'outerwear' as RecommendationSlot, garment: worn.outerwear }] : []),
+    ];
+    void Promise.all(
+      slots.map(async ({ slot, garment }): Promise<PostWearEntry> => {
+        const detail = await getGarmentDetail(garment.id).catch(() => null);
+        return { garmentId: garment.id, slotLabel: SLOT_LABEL[slot], name: detail?.garment.name ?? garment.id };
+      }),
+    ).then((entries) => {
+      const decisions: Record<string, PostWearAction> = {};
+      for (const entry of entries) decisions[entry.garmentId] = 'skip';
+      setPostWear({ entries, decisions, busy: false, error: null });
+    });
+  }, []);
+
+  const choosePostWearAction = useCallback((garmentId: string, action: PostWearAction) => {
+    setPostWear((prev) =>
+      prev ? { ...prev, decisions: { ...prev.decisions, [garmentId]: action }, error: null } : prev,
+    );
+  }, []);
+
+  const submitPostWear = useCallback(async () => {
+    if (!postWear || postWear.busy) return;
+    setPostWear({ ...postWear, busy: true, error: null });
+    try {
+      await applyPostWear(
+        postWear.entries.map((entry) => ({
+          garmentId: entry.garmentId,
+          action: postWear.decisions[entry.garmentId] ?? 'skip',
+        })),
+      );
+      setPostWear(null);
+    } catch {
+      // 失败保留面板可重试（任务卡要求）
+      setPostWear((prev) =>
+        prev ? { ...prev, busy: false, error: '洗护状态未保存，可在详情页手动更新' } : prev,
+      );
+    }
+  }, [postWear]);
+
   const handleSubmit = useCallback(
     async (outfit: Outfit, occ: string, comfort: 'good' | 'ok' | 'bad') => {
       const recId = `rec-${ymd(nowVal)}-${occasion}`;
@@ -242,6 +304,7 @@ export default function TodayScreen({
           setState((prev) =>
             prev.kind === 'recording' ? { kind: 'submitted', result: prev.result, outfit: prev.outfit, inserted: r.inserted } : prev,
           );
+          if (r.inserted) openPostWearPanel(outfit);
         } else {
           const app = await openAppDb();
           const r = await recordWear(app.drizzleDb, {
@@ -258,6 +321,7 @@ export default function TodayScreen({
           setState((prev) =>
             prev.kind === 'recording' ? { kind: 'submitted', result: prev.result, outfit: prev.outfit, inserted: r.inserted } : prev,
           );
+          if (r.inserted) openPostWearPanel(outfit);
         }
       } catch {
         // 失败保留当前搭配和填写内容，允许幂等重试（任务卡要求）
@@ -266,7 +330,7 @@ export default function TodayScreen({
         );
       }
     },
-    [mode, nowVal, occasion, onFeedback, onSubmit],
+    [mode, nowVal, occasion, onFeedback, onSubmit, openPostWearPanel],
   );
 
   const persistFeedback = useCallback(
@@ -548,6 +612,15 @@ export default function TodayScreen({
               <Text style={styles.linkBtnLabel}>查看下一套</Text>
             </Pressable>
           </View>
+        )}
+
+        {state.kind === 'submitted' && postWear && (
+          <PostWearPanel
+            panel={postWear}
+            onSelect={choosePostWearAction}
+            onDone={() => void submitPostWear()}
+            onSkipAll={() => setPostWear(null)}
+          />
         )}
       </ScrollView>
     </TabShell>
@@ -955,6 +1028,80 @@ function RecordingForm({
   );
 }
 
+const POST_WEAR_ACTIONS: { value: PostWearAction; label: string }[] = [
+  { value: 'laundry', label: '待洗' },
+  { value: 'dryclean', label: '干洗' },
+  { value: 'clean', label: '保持干净' },
+  { value: 'skip', label: '跳过' },
+];
+
+/** TDY-07 穿后洗护面板：逐件选择洗护动作，默认全部「跳过」。 */
+function PostWearPanel({
+  panel,
+  onSelect,
+  onDone,
+  onSkipAll,
+}: {
+  panel: PostWearPanelState;
+  onSelect: (garmentId: string, action: PostWearAction) => void;
+  onDone: () => void;
+  onSkipAll: () => void;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.eyebrow}>穿后洗护</Text>
+      <Text style={styles.formHint}>刚穿过的衣物需要洗护吗？逐件选择，默认跳过。</Text>
+      {panel.entries.map((entry) => (
+        <View key={entry.garmentId} style={styles.postWearRow}>
+          <Text style={styles.slotName} numberOfLines={1}>
+            {entry.slotLabel} · {entry.name}
+          </Text>
+          <View style={styles.occasionRow}>
+            {POST_WEAR_ACTIONS.map((action) => (
+              <Pressable
+                key={action.value}
+                accessibilityRole="button"
+                accessibilityLabel={`${entry.name}${action.label}`}
+                disabled={panel.busy}
+                onPress={() => onSelect(entry.garmentId, action.value)}
+                style={[styles.chip, panel.decisions[entry.garmentId] === action.value && styles.chipActive]}
+              >
+                <Text
+                  style={[
+                    styles.chipLabel,
+                    panel.decisions[entry.garmentId] === action.value && styles.chipLabelActive,
+                  ]}
+                >
+                  {action.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ))}
+      {panel.error ? <Text style={styles.postWearError}>{panel.error}</Text> : null}
+      <View style={styles.formActions}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={panel.busy}
+          onPress={onSkipAll}
+          style={styles.secondaryBtn}
+        >
+          <Text style={styles.secondaryBtnLabel}>全部跳过</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={panel.busy}
+          onPress={onDone}
+          style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed, { flex: 1 }]}
+        >
+          <Text style={styles.primaryBtnLabel}>{panel.busy ? '保存中…' : '完成'}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   scroll: {
     paddingBottom: spacing.xxl,
@@ -1167,5 +1314,18 @@ const styles = StyleSheet.create({
   linkBtnLabel: {
     ...typography.bodySm,
     color: palette.mutedGold,
+  },
+  postWearRow: {
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+    backgroundColor: palette.paperWhite,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.hairline,
+  },
+  postWearError: {
+    ...typography.bodySm,
+    color: palette.oxblood,
+    marginBottom: spacing.sm,
   },
 });

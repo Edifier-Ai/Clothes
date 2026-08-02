@@ -22,13 +22,16 @@ const PRIVATE = join(here, '.private');
 interface VArgs {
   tag: string;
   expectRed: boolean;
+  /** .private 下的清单文件名，需与 runBenchmark 的 --manifest 一致 */
+  manifest: string;
 }
 
 function parseArgs(argv: string[]): VArgs {
-  const a: VArgs = { tag: 'run', expectRed: false };
+  const a: VArgs = { tag: 'run', expectRed: false, manifest: 'manifest.json' };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--tag') a.tag = argv[++i];
     if (argv[i] === '--expect-red') a.expectRed = true;
+    if (argv[i] === '--manifest') a.manifest = argv[++i];
   }
   return a;
 }
@@ -40,9 +43,9 @@ function hasAlphaChannel(pngPath: string): boolean {
   return png.width > 0 && png.height > 0 && png.data.length === png.width * png.height * 4;
 }
 
-export function validate(tag: string, expectRed: boolean): { ok: boolean; errors: string[] } {
+export function validate(tag: string, expectRed: boolean, manifestFile = 'manifest.json'): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  const manifest = JSON.parse(readFileSync(join(PRIVATE, 'manifest.json'), 'utf8')) as Manifest;
+  const manifest = JSON.parse(readFileSync(join(PRIVATE, manifestFile), 'utf8')) as Manifest;
   const reportPath = join(PRIVATE, 'results', tag, 'report.json');
   if (!existsSync(reportPath)) return { ok: false, errors: [`missing report: ${reportPath}`] };
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as RunReport;
@@ -117,7 +120,7 @@ export function validate(tag: string, expectRed: boolean): { ok: boolean; errors
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const { ok, errors } = validate(args.tag, args.expectRed);
+  const { ok, errors } = validate(args.tag, args.expectRed, args.manifest);
   if (ok) {
     // eslint-disable-next-line no-console
     console.log(`validate ${args.tag}: OK${args.expectRed ? ' (RED as expected)' : ''}`);

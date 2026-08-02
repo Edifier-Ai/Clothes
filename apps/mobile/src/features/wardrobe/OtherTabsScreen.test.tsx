@@ -20,10 +20,25 @@ jest.mock('expo-image', () => ({ Image: () => null }));
 // DAO/迁移/事务的真实行为由 src/core/db 的 better-sqlite3 测试覆盖。
 jest.mock('@/core/garments/service', () => ({
   listGarments: () => Promise.resolve([]),
+  listActiveGarmentsWithThumbs: () => Promise.resolve([]),
   getGarmentDetail: () => Promise.resolve(null),
   editGarment: () => Promise.resolve(true),
   deleteGarment: () => Promise.resolve(true),
   assetExists: () => Promise.resolve(true),
+  queryWardrobe: () => Promise.resolve([]),
+  batchUpdate: () => Promise.resolve({ updated: 0 }),
+}));
+
+// 造型页（LOK-01）外壳测试不触真实 DB/Skia/文件系统：
+// lookService 单例与封面合成在 jest 无原生层，mock 掉（真实行为由 core 测试覆盖）。
+jest.mock('@/core/looks/lookService', () => ({
+  listLooks: () => Promise.resolve([]),
+}));
+jest.mock('@/features/looks/LookCover', () => ({ LookCover: () => null }));
+
+// 计划页（PLN-01）外壳测试不触真实 DB：planService 单例 mock 掉（真实行为由 core 测试覆盖）。
+jest.mock('@/core/plan/planService', () => ({
+  listPlansInRange: () => Promise.resolve([]),
 }));
 
 import LooksScreen from '../looks/LooksScreen';

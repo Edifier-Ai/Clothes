@@ -1,0 +1,28 @@
+# MVP-008 全程 logcat 检查
+采集时间: Sat Aug  1 23:55:53 2026（`adb logcat -d` 全量 dump 后过滤）
+
+## FATAL EXCEPTION
+命中 0 行。结论：无。
+
+## AndroidRuntime
+原始 `grep -c "FATAL EXCEPTION|AndroidRuntime"` = 55，但逐条核对全部为
+uiautomator/shell 命令自身 RuntimeInit 的 D/I 级例行日志
+（">>>>>> START com.android.internal.os.RuntimeInit uid 2000" / "Calling main entry
+com.android.commands.uiautomator.Launcher" / "Shutting down VM"），与应用无关。
+涉及 com.clothes.app 的 AndroidRuntime 异常：无。
+
+## ReactNativeJS 错误
+`E ReactNativeJS` 命中 0 行。结论：无。
+会话内 ReactNativeJS 全部内容（去重）：
+  2× I ReactNativeJS: Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+（另：首次冷启动时曾有 W 级 "Cannot connect to Expo CLI"（当时 8081 反代未就绪），
+重进后正常，非错误。启动初期出现过 1 次 W 级 NativeDatabase.execAsync NPE 警告横幅，
+force-stop 重启后未再出现，全程功能未再受影响。）
+
+## RNSkia
+仅 I 级 "updateAndRelease() failed. The exception above can safely be ignored"（库自述可忽略）。
+
+## 总结论
+全程无 FATAL EXCEPTION、无应用崩溃、无 ReactNativeJS 错误级日志。
+注意：logcat 无错误不代表功能正常——本次发现的选衣面板裁切、画布图像占位、
+点选失效、封面重建失败均为静默缺陷（JS catch 吞错），logcat 不可见。

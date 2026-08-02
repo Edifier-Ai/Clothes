@@ -54,7 +54,8 @@ function buildSpecs(): FixtureSpec[] {
   return specs;
 }
 
-export interface ManifestEntry extends FixtureSpec {
+export interface ManifestEntry extends Partial<FixtureSpec> {
+  id: string;
   image: string;
   groundTruthAlpha: string;
   /** 人工判定字段（真图流程填写；合成夹具留空，报告中标注 source=synthetic）。 */
@@ -64,7 +65,8 @@ export interface ManifestEntry extends FixtureSpec {
 
 export interface Manifest {
   version: 1;
-  source: 'synthetic' | 'real';
+  /** synthetic=合成夹具；real=真实拍摄；public-dataset=公开数据集真实样本（可混合合成条目，见各条 notes）。 */
+  source: 'synthetic' | 'real' | 'public-dataset';
   generatedAt: string;
   count: number;
   entries: ManifestEntry[];

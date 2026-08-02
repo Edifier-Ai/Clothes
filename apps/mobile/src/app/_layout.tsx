@@ -2,6 +2,7 @@ import { Redirect, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { palette } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
@@ -52,7 +53,7 @@ export default function RootLayout() {
   if (completed === null) return null;
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -65,10 +66,14 @@ export default function RootLayout() {
         <Stack.Screen name="batch-import" options={{ headerShown: true, title: '批量导入' }} />
         <Stack.Screen name="cutout-editor" options={{ headerShown: true, title: '修边' }} />
         <Stack.Screen name="garment/[id]" options={{ headerShown: true, title: '衣物' }} />
-        <Stack.Screen name="segmentation-benchmark" options={{ headerShown: true, title: '抠图探针' }} />
+        <Stack.Screen name="look-editor" options={{ headerShown: true, title: '新建造型' }} />
+        <Stack.Screen name="look/[id]" options={{ headerShown: true, title: '造型' }} />
+        <Stack.Screen name="look-from-garment" options={{ headerShown: true, title: '由此创建造型' }} />
+        <Stack.Screen name="plan/[date]" options={{ headerShown: true, title: '计划' }} />
+        <Stack.Screen name="plan-edit" options={{ headerShown: true, title: '添加计划' }} />
       </Stack>
       {!completed && <Redirect href="/onboarding" />}
       <StatusBar style="dark" />
-    </>
+    </GestureHandlerRootView>
   );
 }

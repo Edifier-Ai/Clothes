@@ -1,0 +1,14 @@
+# RED-BREAK: zorder.bringToFront 去掉 reindex 归一化（2026-08-01）
+Tests:       1 failed, 6 passed, 7 total
+--- 失败详情 ---
+  ● zorder 四操作 › bringToFront：移到最顶
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 1
+
+      Array [
+    -   0,
+        1,
+        2,

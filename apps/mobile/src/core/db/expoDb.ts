@@ -1,13 +1,17 @@
 import { drizzle, type ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
 import * as schema from './schema';
-import { garmentAssets, garmentTags, garments } from './schema';
+import { garmentAssets, garmentStatusEvents, garmentTags, garments, lookItems, looks, plans } from './schema';
 import type {
   GarmentAssetRow,
   GarmentRow,
+  GarmentStatusEventRow,
   GarmentTagRow,
+  LookItemRow,
+  LookRow,
+  PlanRow,
 } from './schema';
 import type { GarmentDb, GarmentDbOps } from './dao';
 import { runMigrations, type QueryableMigrationAdapter } from './migrations';
@@ -66,6 +70,25 @@ function opsOf(d: ExpoSQLiteDatabase<typeof schema>, raw: SQLiteDatabase): Garme
         .run();
       return Promise.resolve();
     },
+    insertStatusEvent: (row) => {
+      d.insert(garmentStatusEvents).values(row).run();
+      return Promise.resolve();
+    },
+    listStatusEventsByGarment: (id) =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(garmentStatusEvents)
+          .where(eq(garmentStatusEvents.garmentId, id))
+          .orderBy(asc(garmentStatusEvents.changedAt))
+          .all() as unknown as GarmentStatusEventRow[]) ?? [],
+      ),
+    getAllStatusEvents: () =>
+      Promise.resolve((d.select().from(garmentStatusEvents).all() as unknown as GarmentStatusEventRow[]) ?? []),
+    deleteAllStatusEvents: () => {
+      d.delete(garmentStatusEvents).run();
+      return Promise.resolve();
+    },
     getGarment: (id) =>
       Promise.resolve(
         (d.select().from(garments).where(eq(garments.id, id)).get() as unknown as GarmentRow | null) ?? null,
@@ -113,6 +136,84 @@ function opsOf(d: ExpoSQLiteDatabase<typeof schema>, raw: SQLiteDatabase): Garme
     },
     deleteAllGarments: () => {
       d.delete(garments).run();
+      return Promise.resolve();
+    },
+    insertLook: (row) => {
+      d.insert(looks).values(row).run();
+      return Promise.resolve();
+    },
+    insertLookItems: (rows) => {
+      if (rows.length === 0) return Promise.resolve();
+      d.insert(lookItems).values(rows).run();
+      return Promise.resolve();
+    },
+    getLook: (id) =>
+      Promise.resolve(
+        (d.select().from(looks).where(eq(looks.id, id)).get() as unknown as LookRow | null) ?? null,
+      ),
+    listLooks: () =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(looks)
+          .where(isNull(looks.deletedAt))
+          .orderBy(desc(looks.updatedAt))
+          .all() as unknown as LookRow[]) ?? [],
+      ),
+    getLookItems: (lookId) =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(lookItems)
+          .where(eq(lookItems.lookId, lookId))
+          .orderBy(asc(lookItems.zIndex), asc(lookItems.ord))
+          .all() as unknown as LookItemRow[]) ?? [],
+      ),
+    updateLook: (id, fields) => {
+      d.update(looks).set(fields).where(eq(looks.id, id)).run();
+      return Promise.resolve();
+    },
+    deleteLookItemsByLook: (lookId) => {
+      d.delete(lookItems).where(eq(lookItems.lookId, lookId)).run();
+      return Promise.resolve();
+    },
+    getAllLooks: () =>
+      Promise.resolve((d.select().from(looks).all() as unknown as LookRow[]) ?? []),
+    getAllLookItems: () =>
+      Promise.resolve((d.select().from(lookItems).all() as unknown as LookItemRow[]) ?? []),
+    deleteAllLooks: () => {
+      d.delete(looks).run();
+      return Promise.resolve();
+    },
+    deleteAllLookItems: () => {
+      d.delete(lookItems).run();
+      return Promise.resolve();
+    },
+    insertPlan: (row) => {
+      d.insert(plans).values(row).run();
+      return Promise.resolve();
+    },
+    getPlan: (id) =>
+      Promise.resolve(
+        (d.select().from(plans).where(eq(plans.id, id)).get() as unknown as PlanRow | null) ?? null,
+      ),
+    listActivePlans: () =>
+      Promise.resolve(
+        (d
+          .select()
+          .from(plans)
+          .where(isNull(plans.deletedAt))
+          .orderBy(asc(plans.date), asc(plans.createdAt))
+          .all() as unknown as PlanRow[]) ?? [],
+      ),
+    updatePlan: (id, fields) => {
+      d.update(plans).set(fields).where(eq(plans.id, id)).run();
+      return Promise.resolve();
+    },
+    getAllPlans: () =>
+      Promise.resolve((d.select().from(plans).all() as unknown as PlanRow[]) ?? []),
+    deleteAllPlans: () => {
+      d.delete(plans).run();
       return Promise.resolve();
     },
     getMetaInt: async (key) => {

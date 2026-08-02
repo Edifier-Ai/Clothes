@@ -9,13 +9,18 @@ import {
   findActiveByHash,
   getGarment,
   listActiveGarments,
+  listActiveGarmentsWithThumbs,
   replaceAll,
   restoreGarment,
   softDeleteGarment,
   updateGarment,
 } from './dao';
 import { SCHEMA_VERSION, runMigrations } from './migrations';
+import { archiveGarment, changeGarmentStatus, listGarmentStatusEvents } from '../wardrobe/status';
+import { enqueue, markSucceeded } from './queue';
+import { cutoutJobs } from './schema';
 import { openTestDb, reopenDb } from './sqliteTestHelper';
+import { eq } from 'drizzle-orm';
 
 function sample(id: string, hash: string, name = '白衬衫') {
   return {
@@ -161,6 +166,29 @@ describe('镜像 dump/replaceAll（持久回灌逻辑）', () => {
     expect((await dumpAll(t.db)).garments).toHaveLength(2);
     t.close();
   });
+
+  it('状态事件随镜像往返：清空后 replaceAll 完整恢复（MVP-007 历史不丢）', async () => {
+    const t = await openTestDb();
+    await createGarment(t.db, sample('g1', 'h1', '衬衫'));
+    await changeGarmentStatus(t.db, 'g1', 'laundry', 2_000);
+    await archiveGarment(t.db, 'g1', 3_000);
+    const dump = await dumpAll(t.db);
+    expect(dump.statusEvents).toHaveLength(2);
+
+    await replaceAll(t.db, { garments: [], assets: [], tags: [] });
+    expect(await listGarmentStatusEvents(t.db, 'g1')).toHaveLength(0);
+
+    await replaceAll(t.db, dump);
+    const events = await listGarmentStatusEvents(t.db, 'g1');
+    expect(events.map((e) => e.toStatus)).toEqual(['laundry', 'archived']);
+    expect(events.map((e) => e.changedAt)).toEqual([2_000, 3_000]);
+    // 归档标记同样随镜像恢复：默认列表不含，详情仍可读（归档区可恢复）
+    expect(await listActiveGarments(t.db)).toHaveLength(0);
+    const g1 = await getGarment(t.db, 'g1');
+    expect(g1?.garment.archivedAt).toBe(3_000);
+    expect((await dumpAll(t.db)).garments[0].archivedAt).toBe(3_000);
+    t.close();
+  });
 });
 
 describe('文件引用（缺失文件不删记录）', () => {
@@ -172,6 +200,59 @@ describe('文件引用（缺失文件不删记录）', () => {
     expect(d).not.toBeNull();
     expect(fileExists).toBe(false);
     expect(d?.asset.originalRelPath).toBe('originals/g1.jpg');
+    t.close();
+  });
+});
+
+describe('衣橱网格缩略图（listActiveGarmentsWithThumbs）', () => {
+  const succeededData = (over: Partial<import('./queue').SucceededData> = {}) => ({
+    originalRelPath: 'originals/g1.png',
+    maskRelPath: 'masks/g1.png',
+    previewRelPath: 'previews/g1.png',
+    thumbnailRelPath: 'thumbnails/g1.png',
+    width: 10,
+    height: 10,
+    ...over,
+  });
+
+  it('无抠图任务时回退到资产原图路径（真实扩展名 .png）', async () => {
+    const t = await openTestDb();
+    const g = sample('g1', 'h1');
+    g.asset.originalRelPath = 'originals/g1.png';
+    await createGarment(t.db, g);
+    const items = await listActiveGarmentsWithThumbs(t.db, t.drizzleDb);
+    expect(items).toHaveLength(1);
+    expect(items[0].garment.id).toBe('g1');
+    expect(items[0].imageRelPath).toBe('originals/g1.png');
+    t.close();
+  });
+
+  it('抠图成功任务优先：缩略图 > 预览 > 原图，同衣物取最新成功任务', async () => {
+    const t = await openTestDb();
+    await createGarment(t.db, sample('g1', 'h1'));
+    await createGarment(t.db, sample('g2', 'h2'));
+    // g1：两次成功，最新一次（createdAt 更大）的缩略图生效。
+    await enqueue(t.drizzleDb, { id: 'j1', garmentId: 'g1', sourceStagedPath: 's1', now: 1_000 });
+    await markSucceeded(t.drizzleDb, 'j1', succeededData({ thumbnailRelPath: 'thumbnails/g1-old.png' }), 1_100);
+    await enqueue(t.drizzleDb, { id: 'j2', garmentId: 'g1', sourceStagedPath: 's2', now: 2_000 });
+    await markSucceeded(t.drizzleDb, 'j2', succeededData({ thumbnailRelPath: 'thumbnails/g1-new.png' }), 2_100);
+    // g2：缩略图缺失时回退到预览图。
+    await enqueue(t.drizzleDb, { id: 'j3', garmentId: 'g2', sourceStagedPath: 's3', now: 3_000 });
+    await markSucceeded(t.drizzleDb, 'j3', succeededData({ previewRelPath: 'previews/g2.png' }), 3_100);
+    await t.drizzleDb.update(cutoutJobs).set({ thumbnailRelPath: null }).where(eq(cutoutJobs.id, 'j3'));
+
+    const items = await listActiveGarmentsWithThumbs(t.db, t.drizzleDb);
+    const byId = new Map(items.map((i) => [i.garment.id, i.imageRelPath]));
+    expect(byId.get('g1')).toBe('thumbnails/g1-new.png');
+    expect(byId.get('g2')).toBe('previews/g2.png');
+    t.close();
+  });
+
+  it('软删除衣物不出现在网格列表', async () => {
+    const t = await openTestDb();
+    await createGarment(t.db, sample('g1', 'h1'));
+    await softDeleteGarment(t.db, 'g1', 9_000);
+    expect(await listActiveGarmentsWithThumbs(t.db, t.drizzleDb)).toHaveLength(0);
     t.close();
   });
 });

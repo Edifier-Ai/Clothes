@@ -1,0 +1,23 @@
+# RED-BREAK-2: batchUpdateGarments 去掉事务包裹（2026-08-01）
+# 破坏方式：db.transaction(fn) 改为直接 work(db)，写入阶段失败无回滚
+Tests:       1 failed, 5 passed, 6 total
+--- 失败详情 ---
+  ● batchUpdateGarments › 反向验证：写入阶段失败（归档衣物改状态），事务回滚无半成品
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "clean"
+    Received: "laundry"
+
+      93 |       batchUpdateGarments(t.db, ['g1', 'g2'], { status: 'laundry' }, NOW + DAY),
+      94 |     ).rejects.toBeInstanceOf(BatchApplyError);
+    > 95 |     expect((await getGarment(t.db, 'g1'))?.garment.status).toBe('clean');
+         |                                                            ^
+      96 |     expect(await listGarmentStatusEvents(t.db, 'g1')).toHaveLength(0);
+      97 |     // g2 保持归档且无新增事件
+      98 |     expect((await getGarment(t.db, 'g2'))?.garment.archivedAt).toBe(NOW);
+
+      at Object.toBe (src/core/wardrobe/batch.test.ts:95:60)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+

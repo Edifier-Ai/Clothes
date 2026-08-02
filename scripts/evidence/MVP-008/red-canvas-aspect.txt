@@ -1,0 +1,2 @@
+# RED: fitCanvasBox/CANVAS_ASPECT 未实现（2026-08-02）
+Tests:       5 failed, 6 passed, 11 total

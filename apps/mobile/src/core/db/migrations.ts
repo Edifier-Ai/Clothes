@@ -27,7 +27,7 @@ export interface MigrationSql {
 }
 
 /** 当前最新 schema 版本；新增迁移追加到 MIGRATIONS 末尾，version 递增。 */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 7;
 
 export const MIGRATIONS: readonly MigrationSql[] = [
   {
@@ -184,6 +184,70 @@ CREATE TABLE weather_cache (
   condition_code TEXT NOT NULL,
   provider TEXT NOT NULL
 );
+`,
+  },
+  {
+    version: 5,
+    sql: `
+CREATE TABLE garment_status_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  garment_id TEXT NOT NULL REFERENCES garments(id) ON DELETE CASCADE,
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  changed_at INTEGER NOT NULL
+);
+CREATE INDEX garment_status_events_garment_time_idx ON garment_status_events (garment_id, changed_at);
+`,
+  },
+  {
+    version: 6,
+    sql: `
+CREATE TABLE looks (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  source_look_id TEXT,
+  cover_rel_path TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX looks_active_idx ON looks (deleted_at, updated_at);
+CREATE TABLE look_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  look_id TEXT NOT NULL REFERENCES looks(id) ON DELETE CASCADE,
+  garment_id TEXT NOT NULL,
+  slot TEXT,
+  x REAL NOT NULL DEFAULT 0.5,
+  y REAL NOT NULL DEFAULT 0.5,
+  scale REAL NOT NULL DEFAULT 1,
+  rotation REAL NOT NULL DEFAULT 0,
+  z_index INTEGER NOT NULL,
+  ord INTEGER NOT NULL
+);
+CREATE INDEX look_items_look_idx ON look_items (look_id, z_index, ord);
+CREATE INDEX look_items_garment_idx ON look_items (garment_id);
+`,
+  },
+  {
+    version: 7,
+    sql: `
+CREATE TABLE plans (
+  id TEXT PRIMARY KEY NOT NULL,
+  date TEXT NOT NULL,
+  time_label TEXT NOT NULL,
+  occasion TEXT,
+  look_id TEXT,
+  outfit_json TEXT NOT NULL,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',
+  completed_at INTEGER,
+  change_note TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX plans_date_idx ON plans (deleted_at, date);
 `,
   },
 ] as const;

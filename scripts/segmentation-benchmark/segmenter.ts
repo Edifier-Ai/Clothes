@@ -2,8 +2,9 @@
  * 抠图 segmenter 适配层。统一接口，候选模型可插拔；走文件路径/二进制，不走 Base64。
  *
  * - StubSegmenter：确定性启发式（中心椭圆 + 颜色对比），用于无模型时跑通管线/自检。
- * - OnnxSegmenter：onnxruntime-node 适配器；模型/运行时缺失时 available=false，
- *   基准据此把该候选记为「未运行/淘汰原因=模型不可用」，绝不伪造结果。
+ * - TencentCiSegmenter：腾讯云数据万象 GoodsMatting 商品抠图（见 tencentCi.ts）；
+ *   凭证缺失时 available=false，基准据此把该候选记为「未运行/淘汰原因=配置不可用」，绝不伪造结果。
+ *   （端侧 ONNX 路线已作废：2026-07-31 拍板改用现成分割 API。）
  */
 import type { RGBA } from './pngUtil';
 
@@ -130,46 +131,5 @@ export class StubSegmenter implements Segmenter {
     }
     for (let i = 0; i < alpha.length; i++) alpha[i] = labels[i] === keep ? 255 : 0;
     return { alpha, ms: performance.now() - t0 };
-  }
-}
-
-/**
- * onnxruntime-node 适配器。运行时或模型缺失即 available=false，不抛、不伪造。
- * 真机探针另见 apps/mobile/src/native/segmentationProbe.ts（onnxruntime-react-native）。
- */
-export class OnnxSegmenter implements Segmenter {
-  name: string;
-  modelBytes: number;
-  modelHash: string;
-  available = false;
-  unavailableReason?: string;
-  private sess: unknown = null;
-
-  constructor(opts: { name: string; modelPath?: string; modelBytes?: number; modelHash?: string }) {
-    this.name = opts.name;
-    this.modelBytes = opts.modelBytes ?? 0;
-    this.modelHash = opts.modelHash ?? '';
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const ort = require('onnxruntime-node');
-      if (!opts.modelPath) {
-        this.unavailableReason = 'model path not provided (no real/converted model bundled)';
-        return;
-      }
-      // 同步创建会话需 ort.InferenceSession.create 为异步；基准用懒加载。
-      this.sess = { ort, modelPath: opts.modelPath };
-      this.available = true;
-    } catch {
-      this.unavailableReason = 'onnxruntime-node not installed in this environment';
-    }
-  }
-
-  async segment(_image: RGBA): Promise<SegmentResult> {
-    if (!this.available || !this.sess) {
-      throw new Error(`segmenter ${this.name} unavailable: ${this.unavailableReason}`);
-    }
-    // 真实推理路径（模型到位后启用）：把 RGBA 归一化为 tensor，run，取 mask，计时。
-    // 当前无模型，故不会执行到此处。
-    throw new Error('onnx inference not wired (no model bundled)');
   }
 }

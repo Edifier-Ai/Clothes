@@ -1,0 +1,5 @@
+# GREEN: 编辑器↔封面同源修复后全量质量门（2026-08-02）
+typecheck 0
+Test Suites: 53 passed, 53 total
+Tests:       368 passed, 368 total
+✖ 9 problems (0 errors, 9 warnings)

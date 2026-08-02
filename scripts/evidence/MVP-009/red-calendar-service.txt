@@ -1,0 +1,48 @@
+FAIL src/core/plan/calendar.test.ts
+  ● Test suite failed to run
+
+    Cannot find module './calendar' from 'src/core/plan/calendar.test.ts'
+
+    However, Jest was able to find:
+    	'./calendar.test.ts'
+
+    You might want to include a file extension in your import, or update your 'moduleFileExtensions', which is currently ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node'].
+
+    See https://jestjs.io/docs/configuration#modulefileextensions-arraystring
+
+    > 1 | import {
+        | ^
+      2 |   addDays,
+      3 |   localDateOf,
+      4 |   monthGrid,
+
+      at Resolver._throwModNotFoundError (../../node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.<anonymous> (src/core/plan/calendar.test.ts:1:1)
+
+FAIL src/core/plan/planService.test.ts
+  ● Test suite failed to run
+
+    Cannot find module './planService' from 'src/core/plan/planService.test.ts'
+
+    However, Jest was able to find:
+    	'./planService.test.ts'
+
+    You might want to include a file extension in your import, or update your 'moduleFileExtensions', which is currently ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node'].
+
+    See https://jestjs.io/docs/configuration#modulefileextensions-arraystring
+
+      1 | import { openTestDb, reopenDb, type TestDb } from '../db/sqliteTestHelper';
+      2 | import { createLook, type CreateLookInput } from '../db/dao';
+    > 3 | import {
+        | ^
+      4 |   deletePlanCore,
+      5 |   getPlanCore,
+      6 |   listPlansInRangeCore,
+
+      at Resolver._throwModNotFoundError (../../node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.require (src/core/plan/planService.test.ts:3:1)
+
+Test Suites: 2 failed, 2 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        0.624 s

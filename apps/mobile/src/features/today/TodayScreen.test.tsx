@@ -1,9 +1,18 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import TodayScreen from './TodayScreen';
 import type { GarmentForRec, Outfit } from '@/core/recommend';
 import type { WeatherController } from './todayWeather';
+import { applyPostWear } from '@/core/garments/service';
+
+// TDY-07：穿后洗护面板走 service 层；这里mock掉，避免触碰真实 DB/文件系统。
+jest.mock('@/core/garments/service', () => ({
+  applyPostWear: jest.fn(() => Promise.resolve({ updatedIds: [], skippedIds: [] })),
+  getGarmentDetail: (id: string) => Promise.resolve({ garment: { name: `衣物-${id}` } }),
+}));
+
+const applyPostWearMock = applyPostWear as jest.MockedFunction<typeof applyPostWear>;
 
 function g(id: string, category: GarmentForRec['category']): GarmentForRec {
   return {
@@ -58,7 +67,35 @@ const noWeatherController: WeatherController = {
 
 const loadNoFeedback = async () => new Map<string, number>();
 
+/** 走完整「就穿这套 → 完成记录」流程，停在穿后洗护面板出现。 */
+async function submitWearAndOpenPostWearPanel() {
+  render(
+    <TodayScreen
+      loadItems={async () => twelveItems}
+      onSubmit={async () => ({ inserted: true })}
+      onFeedback={async () => ({ inserted: true })}
+      loadFeedbackWeights={loadNoFeedback}
+      weatherController={noWeatherController}
+      now={2_000_000}
+    />,
+  );
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: '就穿这套' })).toBeOnTheScreen();
+  });
+  fireEvent.press(screen.getByRole('button', { name: '就穿这套' }));
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: '完成记录' })).toBeOnTheScreen();
+  });
+  fireEvent.press(screen.getByRole('button', { name: '完成记录' }));
+  await waitFor(() => {
+    expect(screen.getByText('穿后洗护')).toBeOnTheScreen();
+  });
+}
+
 describe('TodayScreen（今日页）', () => {
+  beforeEach(() => {
+    applyPostWearMock.mockClear();
+  });
   it('显示页面标题 今天', () => {
     render(<TodayScreen loadItems={async () => new Promise<GarmentForRec[]>(() => [])} />);
     expect(screen.getByText('今天')).toBeOnTheScreen();
@@ -239,5 +276,42 @@ describe('TodayScreen（今日页）', () => {
     await waitFor(() => expect(screen.getByText(/定位未授权/)).toBeOnTheScreen());
     fireEvent.press(screen.getByRole('button', { name: '上海' }));
     await waitFor(() => expect(screen.getByText(/上海 24–31℃/)).toBeOnTheScreen());
+  });
+
+  it('记录穿着成功后出现穿后洗护面板并列出穿过的衣物', async () => {
+    await submitWearAndOpenPostWearPanel();
+    expect(screen.getByText(/上装 · 衣物-t1/)).toBeOnTheScreen();
+    expect(screen.getByText(/下装 · 衣物-b1/)).toBeOnTheScreen();
+    expect(screen.getByText(/鞋 · 衣物-s1/)).toBeOnTheScreen();
+    expect(screen.getByText(/外套 · 衣物-o1/)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '完成' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '全部跳过' })).toBeOnTheScreen();
+  });
+
+  it('选「待洗」后点完成提交 applyPostWear（未选衣物为 skip）并关闭面板', async () => {
+    await submitWearAndOpenPostWearPanel();
+    fireEvent.press(screen.getByRole('button', { name: '衣物-t1待洗' }));
+    fireEvent.press(screen.getByRole('button', { name: '完成' }));
+    await waitFor(() => {
+      expect(applyPostWearMock).toHaveBeenCalledTimes(1);
+    });
+    expect(applyPostWearMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { garmentId: 't1', action: 'laundry' },
+        { garmentId: 'b1', action: 'skip' },
+        { garmentId: 's1', action: 'skip' },
+        { garmentId: 'o1', action: 'skip' },
+      ]),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText('穿后洗护')).toBeNull();
+    });
+  });
+
+  it('「全部跳过」直接关闭面板且不调用 applyPostWear', async () => {
+    await submitWearAndOpenPostWearPanel();
+    fireEvent.press(screen.getByRole('button', { name: '全部跳过' }));
+    expect(applyPostWearMock).not.toHaveBeenCalled();
+    expect(screen.queryByText('穿后洗护')).toBeNull();
   });
 });

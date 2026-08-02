@@ -1,0 +1,42 @@
+# cover-rebuild 反向验证终端记录
+# 日期:
+Sat Aug  1 23:52:22     2026
+
+## 进入两套画布造型详情后（触发后台 rebuildCover），检查缓存目录：
+$ adb shell run-as com.clothes.app ls -l files/covers/
+ls: files/covers/: No such file or directory
+
+## 全套私有文件目录：
+$ adb shell run-as com.clothes.app ls files/
+BridgelessReactNativeDevBundle.js
+SQLite
+clothes
+profileInstalled
+
+## DB 中 cover_rel_path 实况（另附）
+[eval]:3
+const db=new DatabaseSync('/c/Users/Admin/AppData/Local/Temp/clothes-dev2.db',{readOnly:true});
+         ^
+
+Error: unable to open database file
+    at [eval]:3:10
+    at runScriptInThisContext (node:internal/vm:219:10)
+    at node:internal/process/execution:451:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:449:60)
+    at evalFunction (node:internal/process/execution:283:30)
+    at evalTypeScript (node:internal/process/execution:295:3)
+    at node:internal/main/eval_string:71:3 {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 14,
+  errstr: 'unable to open database file'
+}
+
+Node.js v24.18.0
+┌─────────┬────────────────────────────────────────┬─────────────────────┬──────────┬────────────────────────────────────────┬────────────────┬────────────┐
+│ (index) │ id                                     │ name                │ mode     │ source_look_id                         │ cover_rel_path │ deleted_at │
+├─────────┼────────────────────────────────────────┼─────────────────────┼──────────┼────────────────────────────────────────┼────────────────┼────────────┤
+│ 0       │ '019fbe02-2271-7000-a320-60aeb074c0e2' │ '未命名造型'        │ 'canvas' │ null                                   │ null           │ null       │
+│ 1       │ '019fbe03-6aeb-7000-8a58-2bfa9b8a27a2' │ '未命名造型'        │ 'canvas' │ '019fbe02-2271-7000-a320-60aeb074c0e2' │ null           │ null       │
+│ 2       │ '019fbe04-bf3a-7000-b036-e7ac017f3df9' │ '衣物 1white的搭配' │ 'slots'  │ null                                   │ null           │ null       │
+└─────────┴────────────────────────────────────────┴─────────────────────┴──────────┴────────────────────────────────────────┴────────────────┴────────────┘

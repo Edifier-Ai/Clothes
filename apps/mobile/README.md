@@ -1,56 +1,30 @@
-# Welcome to your Expo app 👋
+# Clothes Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Clothes 的 Android 优先 Expo Development Build。业务入口位于 `src/app/`，核心数据默认保存在本机；腾讯云 GoodsMatting 仅在用户配置凭证并明确同意上传后用于抠图。
 
-## Get started
+## 常用命令
 
-1. Install dependencies
+从仓库根目录执行：
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```sh
+pnpm install
+pnpm start
+pnpm typecheck
+pnpm test
+pnpm lint
+pnpm --filter @clothes/mobile run android:debug
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+新增原生依赖后先运行 `pnpm --filter @clothes/mobile prebuild -- --platform android`，再构建新的 APK。Expo Go 不是本项目的验收环境。
 
-### Other setup steps
+## 目录
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- `src/app/`：Expo Router 页面与首启分流。
+- `src/core/`：SQLite、文件镜像、队列、推荐、反馈和天气。
+- `src/features/`：按用户闭环组织的交互。
+- `src/native/`：腾讯云签名/抠图与平台文件适配。
+- `src/design-system/`：方向 3 设计 token 和基础组件。
 
-## Learn more
+## 当前验收边界
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+2026-08-01 自动化质量门为 21 suites / 164 tests / 0 skipped、TypeScript 0 错误、ESLint 0 errors / 14 warnings。MVP-006 仍需物理 Android 截图和离线录屏；MVP-002/003 仍需足量目标场景照片与真机抠图/修边证据。现役状态以仓库根目录的 `tasks/EXECUTION_STATE.md` 为准。

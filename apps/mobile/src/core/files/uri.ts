@@ -1,8 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-/** 把私有目录内相对路径转为可被 expo-image / Image 读取的 file URI。 */
+/** 把私有目录内相对路径转为可被 expo-image / expo-file-system 读写的 file URI。 */
 export function originalUri(relPath: string): string {
-  const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '';
+  // documentDirectory 本身已带 file:// scheme；此前再拼一次会得到
+  // file://file://… 双 scheme——expo-image 容忍它，但 readAsStringAsync /
+  // getInfoAsync / writeAsStringAsync 真机全部失败（MVP-008 画布/封面
+  // 静默解码失败只画占位框的根因）。统一剥掉再补，保证恰好一个 scheme。
+  const base = (FileSystem.documentDirectory ?? '').replace(/^file:\/\//, '').replace(/\/$/, '');
   return `file://${base}/clothes/${relPath}`;
 }
 

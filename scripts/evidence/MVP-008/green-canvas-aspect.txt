@@ -1,0 +1,5 @@
+# GREEN: 3:4 规范画布修复后全量质量门（2026-08-02）
+typecheck 0
+Test Suites: 52 passed, 52 total
+Tests:       365 passed, 365 total
+✖ 9 problems (0 errors, 9 warnings)

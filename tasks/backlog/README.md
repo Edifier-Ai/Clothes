@@ -6,7 +6,7 @@
 
 1. [MVP-000 项目底座](MVP-000-project-bootstrap.md)
 2. [MVP-001 本地衣物闭环](MVP-001-local-garment.md)
-3. [MVP-002 端侧抠图基准](MVP-002-segmentation-benchmark.md)
+3. [MVP-002 分割 API 抠图基准](MVP-002-segmentation-benchmark.md)
 4. [MVP-003 批量抠图与修边](MVP-003-batch-cutout-editor.md)
 5. [MVP-004 12 件首次激活](MVP-004-onboarding-activation.md)
 6. [MVP-005 今日推荐与记录](MVP-005-today-decision.md)

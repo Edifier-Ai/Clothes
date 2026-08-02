@@ -1,9 +1,10 @@
 # Clothes 长期执行状态
 
-最后更新：2026-07-30
+最后更新：2026-08-02
 当前阶段：P0
-当前任务：MVP-006
-状态：MVP-005 ACCEPTED；MVP-006 BLOCKED（实现/自动化/模拟器完成，待物理 Android 真机证据；MVP-002/003 仍待真图，见 B-3/B-5/B-6/B-7）
+当前任务：MVP-010（IN_PROGRESS）
+状态：MVP-009 ACCEPTED（质量门 56 suites/400 tests/0 failed；schema v7 plans+镜像 v7；RED-BREAK 墓碑过滤反向验证；真机 PLN-01/02/03 截图齐、同日工作/晚餐两计划只记一项已穿、force-stop 重启与时区上海↔纽约往返日期零偏移，见 `scripts/evidence/MVP-009/INDEX.md`）；MVP-010 IN_PROGRESS（旅行打包容器：trips/trip_outfits/packing_items/trip_templates v8 迁移 + Core 服务 + 6 屏 + 真机 TRP-01..06）；MVP-002 待真图终判（B-8②，需用户 100–200 张目标场景照片）
+方向决策：2026-07-31 用户拍板抠图改为现成分割 API（唯一路径），端侧 ONNX 作废；**默认引擎已选定腾讯云数据万象 GoodsMatting**（用户已配好账号）。AGENT_GOAL/TECH_STACK/MVP-002/MVP-003 已同步修订，详见 PROGRESS.md 决策记录与 BLOCKED.md B-8。
 
 ## 状态枚举
 
@@ -16,20 +17,75 @@
 
 | 字段 | 内容 |
 |---|---|
-| 卡片 | `tasks/backlog/MVP-006-replacement-feedback-weather.md`（BLOCKED） |
-| 依赖 | MVP-005（✓ ACCEPTED） |
-| 完成证据 | typecheck 0；15 suites / 105 passed / 0 skipped；lint 0 errors / 17 warnings；Android Debug 构建与模拟器主路径通过 |
-| 外部阻塞 | 当前无 USB 物理 Android 手机；待补 TDY-03/04/05/08 真机截图和离线录屏 |
+| 卡片 | `tasks/backlog/MVP-010-trip-packing.md` |
+| 依赖 | MVP-009（✓ ACCEPTED） |
+| 已完成 | 2026-08-02 MVP-009 ACCEPTED：schema v7 plans（当地日期字面量+单品快照+墓碑）+ 镜像 v7；PLN-01/02/03 三屏与路由；质量门 56 suites/400 tests/0 failed、lint 0 err/9 warn；RED-BREAK 墓碑反向验证；真机截图+时区往返 |
+| 待办 | MVP-010（IN_PROGRESS）：schema v8（trips/trip_outfits/packing_items/trip_templates）+ 镜像 v8 + Core 服务（tripService/packingService）+ 纯函数 packView + 6 屏（TripsScreen/TripEdit/TripOverview/TripDayPlan/PackingList/TripReview）+ 6 路由 + PlanScreen 旅行入口；RED-BREAK 去重逻辑；真机 TRP-01..06 + 重启持久 + 镜像 v8 复核 |
 
-## MVP-002 结果（BLOCKED 无真图；管线/探针就绪）
+## MVP-009 验收结果（ACCEPTED —— 2026-08-02）
 
 | 检查 | 结果 |
 |---|---|
-| 基准管线 | host tsx+pngjs：清单/夹具/逐图/联系表/报告 全就绪，可复跑 |
-| 校验脚本 | 样本/结果/缺失/透明通道/耗时一致；clean=OK exit0 |
-| 反向验证 | 注入损坏图→validate exit3(RED)；重建清单→OK(GREEN) |
-| on-device 探针 | onnxruntime-react-native 集成+基准页；真机延迟待重编+真模型 |
-| 真图门槛 | **未测**（无真图）→ 卡片 BLOCKED，不标最终验收 |
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | 56 suites / 400 passed / 0 failed |
+| `pnpm lint` | 0 errors / 9 warnings |
+| 月历语义 | 周一开头 42 格、2026-07-27 周一归位、跨月 spillover；UTC 日期数学 DST 安全（calendar 13 用例） |
+| 同日多时段 | 白天(通勤·关联造型)+晚餐(临时组合)各自独立编辑；只记录晚餐一项已穿，白天保持 planned（真机 pln-02） |
+| 记录已穿幂等 | status 非 planned 再记录原样返回不改 completedAt（planService 用例）；UI 完成后无重复入口 |
+| 快照与修复 | 保存时展开造型单品快照；造型墓碑后快照完整、lookMissing=true、PLN-02「重新选择造型」修复入口 |
+| 编辑/移动/删除 | 删除为墓碑（列表消失行保留、不动造型）；lookId 缺省保持/显式 null 改回临时组合 |
+| 重启/时区 | force-stop 冷启动无偏移；系统时区上海→纽约→上海往返，计划日期字面量与已穿状态零漂移（真机 3 张） |
+| 持久化 | schema v7 plans 表 + 镜像 v7（设备镜像 plans 段含 outfitJson 快照，pln-mirror-plans.json） |
+| 反向验证 | RED-BREAK：去两处 listActivePlans 墓碑过滤 → 墓碑行泄漏红灯（red-break-tombstone.txt）；还原全绿 |
+
+证据：`scripts/evidence/MVP-009/INDEX.md`（真机截图 9 张 + RED/GREEN/RED-BREAK 输出 + 镜像 plans 段）
+
+## MVP-008 验收结果（ACCEPTED —— 2026-08-02）
+
+| 检查 | 结果 |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | 53 suites / 368 passed / 0 skipped |
+| `pnpm lint` | 0 errors / 9 warnings |
+| 快速槽位 | 6 槽合法性校验、缺项提示实时更新（slots host 测试 + LOK-02 截图） |
+| 自由画布 | 点选/拖动/双指缩放旋转/置底/撤销重做（redo 与操作态 md5 一致；20 连撤销重做 history host 覆盖） |
+| 3:4 统一画布 | 编辑/封面合成（840×1120）/图库详情三处同比例，缓存封面 contain 不裁切（geometry +5 用例） |
+| 编辑器↔封面同源 | displayImagePaths 双通道，画布与封面同用透明底预览（displayImage +3 用例） |
+| 持久化重启一致 | 五件画布保存 → force-stop 重启 → 详情几何层级逐件一致（lok-r5-03/05b/06/07） |
+| 克隆/变体 | 变体只换下装、source_look_id 关联保留、原造型未改（LOK-06 截图 + lookFactory host） |
+| 反向验证 | 删派生封面 PNG → 冷启动由 look_items 事实实时重建，造型不丢；另有 host RED-BREAK zorder 去归一化红灯 |
+| 响应矩阵 | 模拟器 360×800/390×844/430×932 + 1.3× 字体 12 张 lok-r6 截图，无裁切无溢出 |
+
+证据：`scripts/evidence/MVP-008/INDEX.md`（真机 r3/r5 截图 + 手势录屏 + RED/GREEN 输出 + 模拟器矩阵）
+
+## MVP-007 验收结果（ACCEPTED —— 2026-08-01）
+
+| 检查 | 结果 |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | 30 suites / 236 passed / 0 skipped |
+| `pnpm lint` | 0 errors / 9 warnings |
+| 搜索/组合筛选 | 类别+颜色+季节+场景+状态+久未穿+名称/品牌/备注，组合交集、归档排除、无结果保留条件（search.test 9 用例 + CLS-02 真机截图） |
+| 详情真实统计 | 次数/最近/成本次（19900÷2=9950，无效显口径）/使用造型（stats.test 7 用例 + CLS-03 截图） |
+| 状态机与历史 | clean/laundry/dryclean/loaned + archivedAt 正交；事件全带时间戳；相同状态不记；归档须先恢复（status.test 10 用例 + CLS-05/06 截图） |
+| 批量事务 | 预校验+写入两阶段；写入期失败整体回滚（RED-BREAK-2 去事务 → g1 被改 laundry 红灯实锤；还原全绿） |
+| 归档恢复 | 默认列表/推荐排除，恢复后 wear_logs/事件完整；归档区批量恢复真机截图 |
+| 穿后联动 | TDY-07 逐件洗护、skip 不篡改、不存在即回滚；laundry/dryclean 经 isAvailable 立即排除出推荐 |
+| 持久化 | schema v5 garment_status_events；镜像 v5 往返测试；真机 force-stop 重启历史 6 条完整（cls-06b） |
+| 300 件性能 | build≈4–5ms / filter/sort/search≈0ms（阈值 500ms 未松动，perf-300.txt） |
+| 反向验证 | RED-BREAK-1 断镜像回灌 → 事件丢失红灯；RED-BREAK-2 去事务 → 半数衣物被改红灯；双还原绿灯 |
+
+证据：`scripts/evidence/MVP-007/INDEX.md`（真机截图 18 张 + RED/GREEN 输出 + 性能日志）
+
+## MVP-002 结果（BLOCKED：GoodsMatting 已接通，样本量与真机终判未完成）
+
+| 检查 | 结果 |
+|---|---|
+| 默认引擎 | 腾讯云数据万象 GoodsMatting；host 真实冒烟 `256×320 → 686ms`，上传、处理、下载、alpha 提取与 COS 删除通过 |
+| App 接线 | SecureStore 凭证、上传告知/同意、可恢复队列、临时网络错误回 pending、原图兜底均已实现 |
+| 公开样本 | 10 张已实跑，p50 1107ms / p95 1511ms；5 张目标电商图人工判定 4/5 可用，鞋类只抠单只为已知失败模式 |
+| 自动报告限制 | 5 张电商图 ground truth 是全零占位、5 张 ModaNet 是人物穿搭标注，与“单件商品抠图”目标不一致，自动 0%/70% 不可作终判 |
+| 真图门槛 | 任务卡要求 100–200 张目标场景样本和 Android 真机结果，当前均未完成，保持 BLOCKED |
 
 证据：`scripts/evidence/MVP-002/INDEX.md`
 
@@ -79,54 +135,64 @@
 | 持久化 | 镜像 v3 跨强杀恢复 recommendations+wear_logs；真机 force-stop 重启后推荐盘活不同衣物 |
 | schema v3 | recommendations/recommendation_items/reason_codes/wear_logs/wear_log_items |
 
-## MVP-003 结果（代码完整；Skia 链接已解决，真图设备复验仍 BLOCKED 见 B-3/B-5/B-6）
+## MVP-003 验收结果（ACCEPTED —— 2026-08-01 真机复验完成）
 
 | 检查 | 结果 |
 |---|---|
-| schema v2 | cutout_jobs 状态机 + mask_strokes 操作栈 |
-| 队列+处理器 | 幂等入队/顺序drain/recover/重试/跳过/进度快照，host 测试覆盖 |
-| 管线 | 原子 tmp→commit、原图不覆盖、派生图可重建，host 测试覆盖 |
-| 引擎 | 可替换 SegmentationEngine（stub；ONNX 待 MVP-002 注入） |
-| 镜像 v2 | 含队列+操作栈，跨强杀恢复 |
-| UI | batch-import(IMP-02) + cutout-editor(IMP-03/04: Skia+PanResponder 平移/缩放/笔刷/撤销/保存) |
-| 质量门 | typecheck0 / lint0err / test 52/52/0 |
-| 设备验证 | **部分**：本次原生重建已确认 Skia autolink；仍缺真实衣物原图/抠图结果，画布与导出需随真图补验 |
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | 24 suites / 182 passed / 0 skipped |
+| `pnpm lint` | 0 errors / 9 warnings |
+| 12 连导+杀进程恢复 | succeeded 11/running 1/pending 3 时 force-stop → 重启自动续跑 → 15/15，已提交 11 件 updatedAt 零变化（不重做） |
+| 腾讯云真实抠图 | 首轮 3/3 + 本轮 12/12，failed 0 |
+| Skia 修边 | 擦除/撤销（至 0）/恢复/缩放/笔刷/保存全过；退出重进蒙版+操作栈一致；原图 sha256 修边前后不变；预览/缩略图按新蒙版重建 |
+| 复验驱动修复 | enqueueBatch 漏 asset 行（RED→GREEN）、详情无修边入口（+2 测试）、Skia lazy-require Rect 报错+useImage file:// 空白（拆 SkiaCanvas 模块+decodeSkImage，+2 测试）、队列中断无续跑入口（挂载自动续跑+按钮放开，+2 测试） |
+| 诚实限制 | 12 张测试照片多为非衣物图（队列机制验证，质量门槛归 MVP-002）；真机失败注入=杀进程；`_staging/` 成功后残留（非阻塞） |
 
-## MVP-006 结果（实现完成；真机证据 BLOCKED 见 B-7）
+证据：`scripts/evidence/MVP-003/INDEX.md`（真机截图 15 张 + MKV 修边录屏 + 设备 DB/镜像 dump）
+
+## MVP-006 验收结果（ACCEPTED —— 2026-08-01 真机证据补齐）
 
 | 检查 | 结果 |
 |---|---|
-| 替换/重算 | 同槽替换保持其他 ID；整套去重；主角锁定；候选耗尽可解释 |
-| 模式与反馈 | safe/fresh/hero/hurry；反馈幂等落库，软权重不覆盖硬约束 |
-| 天气 | 和风优先（有 key 时）+ Open-Meteo 备用；fresh/stale/offline/no-cache；异常响应不伪造温度 |
-| 隐私 | 定位只在用户主动点击后请求前台权限；拒绝后可手选城市或关闭天气 |
-| 持久化 | schema/mirror v4，含 feedback_events/weather_cache；全新安装镜像目录自动创建 |
-| 质量门 | typecheck0 / lint0err(17warn) / 15 suites / 105 passed / 0 skipped |
-| Android | prebuild + assembleDebug 成功，505 tasks；APK 可安装启动；Skia 原生任务已执行 |
-| 模拟器 | 390×844 TDY-03/04/05/08 与离线缓存降级通过 |
-| 真机 | **未完成**：当前无 USB 物理 Android 手机，按任务卡不得标 ACCEPTED |
+| 替换/重算 | 真机：只换上装其余 ID 不变；换一套不重复、主角保留、跳过原因落库 |
+| 模式与反馈 | 四模式真机应用「新鲜」生效；镜像含 replace/skip/mode 反馈事件 |
+| 天气 | 真机：前台授权仅点击后弹出、拒绝可手选城市、上海实时温度参与推荐（外套槽消失） |
+| 离线 | 飞行模式「使用缓存」+ 搭配不消失：截图 + 78.9s scrcpy 录屏 |
+| 持久化 | 设备镜像 v3→v4 升级，含 12 件衣物、3 条反馈、1 条天气缓存 |
+| 质量门 | typecheck0 / lint 0err / 105+ 测试全过（batch-import 测试移至 `apps/mobile/tests/` 后 11/11） |
+| Android | 2026-08-01 prebuild + assembleDebug 成功（505 tasks，9m20s），APK 含 expo-secure-store，真机安装运行 |
+| logcat | 无 FATAL EXCEPTION / AndroidRuntime / ReactNativeJS 错误 |
+
+证据：`scripts/evidence/MVP-006/INDEX.md`（真机截图 12 张 + 离线录屏 + 解锁清单 8 项全 ✓）
 
 ## P0 顺序
 
-`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003(代码✓/真图设备复验 BLOCKED) → 004(✓) → 005(✓) → 006(实现✓/真机证据 BLOCKED) → 007 → 008 → 009 → 010 → 011 → 012 → 013 → 014`
+`MVP-000(✓) → 001(✓) → 002(BLOCKED 真图) → 003(✓) → 004(✓) → 005(✓) → 006(✓) → 007(✓) → 008(✓) → 009(✓) → 010(IN_PROGRESS) → 011 → 012 → 013 → 014`
 
 不得跳过依赖。任务被外部输入阻塞时，可做与其无依赖且不会造成返工的文档、测试夹具或下一卡预研，但不能把下一卡标为 `IN_PROGRESS`。
 
 ## 最近命令与结果
 
 - `pnpm install`（hoisted，lockfile 提交）exit 0
-- `pnpm typecheck|lint|test`：0 / 0err(17warn) / 105-0
+- 2026-08-02 本轮：typecheck 0；56 suites / 400 passed / 0 failed；lint 0 errors / 9 warnings
+- 2026-08-02 前轮：typecheck 0；53 suites / 368 passed / 0 skipped；lint 0 errors / 9 warnings
 - `npx expo prebuild --platform android --no-install`：成功
-- Android `assembleDebug`：BUILD SUCCESSFUL，505 tasks
+- 2026-07-30 旧 Android `assembleDebug`：BUILD SUCCESSFUL，505 tasks；2026-08-01 当前副本未发现 APK，加入 expo-secure-store 后须重新 prebuild+构建
+- 2026-08-02 模拟器矩阵：sdkmanager 重装 android-35 google_apis x86_64；AVD Clothes2_360x800/390x844/430x932 可用（wm size/density 实测符合）；种子包 `C:/Users/Admin/AppData/Local/Temp/clothes-seed/seed.tar`（55M，40 衣物资产，run-as 注入 files/clothes 后 DB 空自动镜像恢复）；注意 Temp 目录可能被系统清理，必要时从真机重拉
 - MVP-006 模拟器：TDY-03/04/05/08 与离线缓存降级通过；真机待 B-7 解锁
 
 ## 恢复点
 
 1. 读取 `PROGRESS.md`。
-2. 读取本文件确认当前卡（MVP-006，BLOCKED，不激活下一卡）。
+2. 读取本文件确认当前卡（MVP-010）。
 3. 读取当前卡的验收与非目标。
 4. 检查工作树，保留未知改动。
-5. 连接物理 Android 手机后按 `scripts/evidence/MVP-006/INDEX.md` 补验，不重复模拟器证据。
+5. 2026-08-02 MVP-009 ACCEPTED：schema v7 plans（date 当地日期字面量、outfitJson 快照、墓碑、无外键）+ 镜像 v7；calendar/planService/planView 纯函数+可注入 Core；PLN-01/02/03 三屏 + `plan/[date]`、`plan-edit` 路由；PlanScreen 场合标签中文映射为复验补的缺陷修复；`src/app/` 测试禁放约定仍有效，OtherTabsScreen 外壳测试 mock 了 planService 单例；真机改时区用 `service call alarm 3 s16 "<IANA>"`（ColorOS 禁 shell 写 secure settings）。
+6. 2026-08-01 已完成：ADB 授权恢复；prebuild+assembleDebug 新 APK（含 expo-secure-store）装真机；MVP-006 真机证据补齐并 ACCEPTED；`src/app/` 路由目录不再放测试文件（batch-import.test.tsx 已移至 `apps/mobile/tests/`）；MVP-003 真机复验 ACCEPTED（4 缺陷修复：enqueueBatch 漏 asset 行/详情无修边入口/Skia lazy-require+useImage 双故障/队列中断无续跑入口；设备 adb reverse tcp:8081 需在重启 App 前确认）。
+7. 2026-08-01 MVP-007 ACCEPTED：实现为上一会话产出、本轮核对验收；新增 2 测试（镜像状态事件往返、批量写入期回滚）+ RED-BREAK 双反向验证（`red-break-1/2-*.txt`）；真机补拍 CLS-05/06/06b（杀进程后状态历史完整）。取证辅助 `scripts/evidence/MVP-007/ui.sh`；设备息屏先 `KEYCODE_WAKEUP`，勿用 keyevent 82（触发 Dev Menu）。
+8. 2026-08-02 MVP-008 ACCEPTED：UI/领域层为上轮产出、本轮核对验收；复验驱动 2 静默缺陷修复（3:4 统一画布 CANVAS_ASPECT/fitCanvasBox、displayImagePaths 双通道同源）均 RED→GREEN；真机 r5 终验（五件画布重启一致、删封面冷启动重建）+ 模拟器响应矩阵 12 张 lok-r6。模拟器种子注入要点：adb push 本地路径用 Windows 形式、先 mkdir files/clothes、MSYS2_ARG_CONV_EXCL="*" 防路径转换；font_scale 变更会 recreate Activity 重现未完成的首套搭配向导（点「进入今日」即可）。
+9. 2026-08-02 MVP-010 IN_PROGRESS：旅行打包容器。设计：schema v8 加 trips/trip_outfits/packing_items/trip_templates 四表（当地日期字面量、单品快照、墓碑、无外键、勾选状态与衣物事实分离）；mirror v8（四表随 GarmentDump 进 dumpExtra/restoreExtra，兼容读 v1–v7）；Core 服务 `core/trip/tripService.ts`（旅行 CRUD/每日造型安排/记录已穿幂等/快照，仿 planService）+ `core/trip/packingService.ts`（regenerate 去重生成 + 来源计数 + 手工项不动 + 勾选幂等 + 模板）+ 纯函数 `core/trip/packView.ts`；UI 6 屏（TRP-01..06）+ 6 路由 + PlanScreen 旅行入口。RED：tripService/packingService/packView 三 suite 先行。
+10. MVP-002 终判仍需用户拍摄 100–200 张目标场景衣物照片（B-8②，外部输入）。
 
 ## P1 队列
 

@@ -12,12 +12,17 @@
 - OPlus 把 shell `pm install` 与 `adb install` 都重定向到 GUI 确认页，且拒绝 `WRITE_SETTINGS`/`WRITE_SECURE_SETTINGS`，故 adb 无法改 `font_scale`/关校验；安装经 `input tap` 自动点确认完成，1.3× 字体矩阵改在 AOSP 模拟器取证。
 - 真机对 MVP-000 骨架的「安装+启动+四标签切换+重启」已验收；**断网 12 件导入→抠图→推荐→替换→记录→重启→导出** 的完整真机闭环需待对应业务卡实现后再验，本卡不声称完成。
 
-## B-3 / B-5 抠图真实照片基准 —— 管线就绪，真图缺，卡片 BLOCKED（2026-07-28）
-MVP-002 需 100–200 张真实衣物照片；当前无真图。已交付可复跑基准管线（host tsx+pngjs：清单格式、
-私有样本目录、合成夹具生成、逐图结果+联系表+报告、校验脚本、红→绿反向验证）与 on-device 探针代码
-（onnxruntime-react-native，走文件/二进制），见 `scripts/evidence/MVP-002/INDEX.md`。
-因无真图，「直接可用率≥80%/严重失败≤5%」与默认/备用模型选择**不得**据此判定，MVP-002 保持 BLOCKED，
-不标最终验收。on-device 真机延迟待 `expo prebuild` 链接 onnxruntime-react-native + 真/转换模型后测。
+## B-8 抠图路径变更（2026-07-31 用户拍板）——端侧 ONNX 作废，改分割 API
+
+- 原 B-3/B-5（端侧基准缺真图）随路径变更失效：MVP-002 已重写为分割 API 基准，候选为免费层 API，样本允许公开衣物数据集补足并标注来源。
+- **选型已定（2026-07-31）：腾讯云数据万象 GoodsMatting 商品抠图**，用户已完成账号/存储桶配置。免费额度 1000 次（2 个月，首次使用自动发放）+ ¥0.01/次按量；备用候选阿里云 SegmentCloth/百度智能抠图（调研对比见决策记录）。
+- 当前阻塞：~~① 本地基准凭证配置~~ **已解决（2026-07-31）**：真实冒烟通过（`smokeTencentCi.ts`，256×320 合成图，端到端 686ms，alpha 提取正常，COS 对象用后删除）；② 任务卡要求的 100–200 张目标场景样本与 Android 真机结果未备齐。完成前 MVP-002 保持 BLOCKED，不得标 ACCEPTED。
+- 旧 on-device 探针（onnxruntime-react-native、segmentationProbe、benchmark 页）已从现役代码清理；历史结论保留在 Git 与 `PROGRESS.md`。
+- 隐私继承要求：上传告知+用户明确确认（TECH_STACK 第 4 节），key 仅存设备端 expo-secure-store；COS 对象处理后即删，照片不在云端留存。
+
+## B-3 / B-5 旧端侧抠图阻塞 —— 已被 B-8 取代（2026-07-31）
+
+旧 ONNX 模型、运行时和 on-device 探针不再是现役依赖，相关代码已经删除。仍有效的“真实样本不足”约束已合并到 B-8：GoodsMatting 已完成真实链路冒烟和 10 张公开样本试跑，但未达到任务卡要求的 100–200 张目标场景样本与真机终判，不得标记 MVP-002 `ACCEPTED`。现役证据见 `scripts/evidence/MVP-002/INDEX.md`。
 
 ## B-4 expo-sqlite 在本机提交不 fsync —— 已用文件镜像适配（2026-07-28）
 
@@ -44,13 +49,11 @@ JSON 镜像 `garments_mirror.json` 为持久事实源——每次写后 `writeAs
   B-3/B-5 的真图样本一起补验；在补验前不得把 MVP-003 标记为 `ACCEPTED`。
 - 构建证据：`scripts/evidence/MVP-006/gradle-build.stdout.log`。
 
-## B-7 MVP-006 缺少真实 Android 手机验收（2026-07-30）
+## B-7 MVP-006 缺少真实 Android 手机验收（2026-08-01 更新）
 
 - 代码、105 个自动化测试、类型检查、Lint、Android 原生构建和 390×844 模拟器主路径均已通过。
 - 模拟器已覆盖单槽替换、整套换一套、模式、前台定位授权、拒绝定位、手选城市和离线缓存降级。
-- 当前 `adb devices` 没有 USB 真机；任务卡明确要求“真机截图与一次离线录屏”，因此
-  MVP-006 保持 `BLOCKED`，不能提前标记为 `ACCEPTED`，也不能越过依赖激活 MVP-007。
-- 解锁条件：连接 OnePlus 或任意物理 Android 手机，安装
-  `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`，按证据索引补拍
+- 当前实体设备 `10c1b57d` 已连接，但 `adb devices -l` 状态为 `unauthorized`；当前副本也没有可安装 APK。任务卡明确要求“真机截图与一次离线录屏”，因此 MVP-006 保持 `BLOCKED`，不能提前标记为 `ACCEPTED`，也不能越过依赖激活 MVP-007。
+- 解锁条件：在手机上确认 USB 调试授权；因新增 expo-secure-store，先重新 prebuild+构建，再安装生成的 Debug APK，按证据索引补拍
   TDY-03/04/05/08 截图和一次飞行模式/断网恢复录屏。
 - 模拟器证据与复验清单：`scripts/evidence/MVP-006/INDEX.md`。

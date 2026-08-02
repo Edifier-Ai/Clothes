@@ -1,0 +1,2 @@
+# RED: displayImagePaths 未实现（2026-08-02）
+Tests:       3 failed, 3 total

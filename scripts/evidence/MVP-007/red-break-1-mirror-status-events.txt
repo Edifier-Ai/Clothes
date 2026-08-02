@@ -1,0 +1,26 @@
+# RED-BREAK-1: dao.replaceAll 注释掉 statusEvents 回灌（2026-08-01）
+    + Received  + 1
+
+    - Array [
+    -   "laundry",
+    -   "archived",
+    - ]
+    + Array []
+
+      181 |     await replaceAll(t.db, dump);
+      182 |     const events = await listGarmentStatusEvents(t.db, 'g1');
+    > 183 |     expect(events.map((e) => e.toStatus)).toEqual(['laundry', 'archived']);
+          |                                           ^
+      184 |     expect(events.map((e) => e.changedAt)).toEqual([2_000, 3_000]);
+      185 |     // 归档标记同样随镜像恢复：默认列表不含，详情仍可读（归档区可恢复）
+      186 |     expect(await listActiveGarments(t.db)).toHaveLength(0);
+
+      at Object.toEqual (src/core/db/garmentsDao.test.ts:183:43)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 14 skipped, 15 total
+Snapshots:   0 total
+Time:        0.461 s, estimated 1 s
+Ran all test suites matching /src\\core\\db\\garmentsDao.test.ts/i with tests matching "状态事件随镜像往返".

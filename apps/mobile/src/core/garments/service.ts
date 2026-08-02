@@ -6,20 +6,44 @@ import {
   findActiveByHash,
   getGarment,
   listActiveGarments,
+  listActiveGarmentsWithThumbs as listWithThumbs,
   restoreGarment,
   softDeleteGarment,
   updateGarment,
   type CreateGarmentInput,
   type GarmentDetail,
   type UpdateGarmentInput,
+  type WardrobeListItem,
 } from '../db/dao';
-import type { TagKind } from '../db/schema';
+import type { GarmentStatusEventRow, TagKind } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
 import { expoCrypto, makeExpoFs, rnDimReader } from '../files/expoAdapters';
 import { originalExists, stageImage, type StagedImage } from '../files/imageStore';
 import { restoreFromMirrorIfNeeded, writeMirror } from './mirror';
+import { listByStatus } from '../db/queue';
+import { batchUpdateGarments, type BatchPatch, type BatchResult } from '../wardrobe/batch';
+import { buildWardrobeItems } from '../wardrobe/query';
+import {
+  applyWardrobeFilter,
+  sortWardrobeItems,
+  type WardrobeFilter,
+  type WardrobeItem,
+  type WardrobeSort,
+} from '../wardrobe/search';
+import {
+  applyPostWearCare,
+  archiveGarment,
+  changeGarmentStatus,
+  listGarmentStatusEvents,
+  unarchiveGarment,
+  type CareStatus,
+  type PostWearAction,
+  type PostWearResult,
+  type StatusChangeResult,
+} from '../wardrobe/status';
+import { getGarmentStats, type GarmentStats } from '../wardrobe/stats';
 
-export type { GarmentDetail, CreateGarmentInput, UpdateGarmentInput };
+export type { GarmentDetail, CreateGarmentInput, UpdateGarmentInput, WardrobeListItem };
 
 export interface GarmentForm {
   name: string;
@@ -27,6 +51,8 @@ export interface GarmentForm {
   color?: string;
   season?: string;
   occasion?: string;
+  brand?: string;
+  note?: string;
 }
 
 export type AddResult =
@@ -88,6 +114,8 @@ function formToTags(form: GarmentForm) {
   if (form.color) tags.push({ kind: 'color', value: form.color, confidence: 1 });
   if (form.season) tags.push({ kind: 'season', value: form.season, confidence: 1 });
   if (form.occasion) tags.push({ kind: 'occasion', value: form.occasion, confidence: 1 });
+  if (form.brand) tags.push({ kind: 'brand', value: form.brand, confidence: 1 });
+  if (form.note) tags.push({ kind: 'note', value: form.note, confidence: 1 });
   return tags;
 }
 
@@ -165,6 +193,12 @@ export async function listGarments() {
   return listActiveGarments((await readyDb()).db);
 }
 
+/** 衣橱网格数据源：活动衣物 + 展示图路径（抠图缩略图/预览优先，原图兜底）。 */
+export async function listActiveGarmentsWithThumbs(): Promise<WardrobeListItem[]> {
+  const app = await readyDb();
+  return listWithThumbs(app.db, app.drizzleDb);
+}
+
 export async function getGarmentDetail(id: string) {
   return getGarment((await readyDb()).db, id);
 }
@@ -193,6 +227,105 @@ export async function assetExists(detail: GarmentDetail) {
     fs: makeExpoFs(root()),
     rootAbs: root(),
   });
+}
+
+/* ---------------- MVP-007：衣橱搜索/筛选/状态/批量/统计 ---------------- */
+
+export interface WardrobeEntry {
+  item: WardrobeItem;
+  /** 网格/列表缩略图：缩略图优先，预览/原图兜底，均无则 null。 */
+  imageRelPath: string | null;
+  /** 造型画布/封面展示图：预览优先（与 rebuildCoverSpec 同源），缩略图/原图兜底。 */
+  previewRelPath: string | null;
+}
+
+/**
+ * 衣物展示图双通道（MVP-008 编辑器↔封面一致性）：
+ * thumb 缩略图优先（网格/列表小图省内存）；preview 预览优先
+ * （透明底、真实宽高比——缩略图是 96×96 方形压缩图，用于画布会所见≠所得）。
+ */
+export function displayImagePaths(
+  job: { previewRelPath: string | null; thumbnailRelPath: string | null } | undefined,
+  originalRelPath: string | null,
+): { thumb: string | null; preview: string | null } {
+  return {
+    thumb: job?.thumbnailRelPath ?? job?.previewRelPath ?? originalRelPath,
+    preview: job?.previewRelPath ?? job?.thumbnailRelPath ?? originalRelPath,
+  };
+}
+
+export type { BatchPatch, BatchResult, CareStatus, GarmentStats, PostWearAction, PostWearResult, StatusChangeResult, WardrobeFilter, WardrobeItem, WardrobeSort };
+
+/** 衣橱网格数据源（CLS-01/02）：组合筛选 + 排序 + 展示图。含归档区（filter.status='archived'）。 */
+export async function queryWardrobe(
+  filter: WardrobeFilter,
+  sort: WardrobeSort = 'recentAdded',
+): Promise<WardrobeEntry[]> {
+  const app = await readyDb();
+  const [items, assets, jobs] = await Promise.all([
+    buildWardrobeItems(app.db, app.drizzleDb),
+    app.db.getAllAssets(),
+    listByStatus(app.drizzleDb, 'succeeded'),
+  ]);
+  const assetByGarment = new Map(assets.map((a) => [a.garmentId, a]));
+  const jobByGarment = new Map(jobs.map((j) => [j.garmentId, j]));
+  const sorted = sortWardrobeItems(applyWardrobeFilter(items, filter, Date.now()), sort);
+  return sorted.map((item) => {
+    const job = jobByGarment.get(item.garment.id);
+    const paths = displayImagePaths(job, assetByGarment.get(item.garment.id)?.originalRelPath ?? null);
+    return {
+      item,
+      imageRelPath: paths.thumb,
+      previewRelPath: paths.preview,
+    };
+  });
+}
+
+export async function setGarmentStatus(id: string, to: CareStatus): Promise<StatusChangeResult> {
+  const r = await changeGarmentStatus((await readyDb()).db, id, to, Date.now());
+  await persist();
+  return r;
+}
+
+export async function archiveGarmentById(id: string): Promise<StatusChangeResult> {
+  const r = await archiveGarment((await readyDb()).db, id, Date.now());
+  await persist();
+  return r;
+}
+
+export async function unarchiveGarmentById(id: string): Promise<StatusChangeResult> {
+  const r = await unarchiveGarment((await readyDb()).db, id, Date.now());
+  await persist();
+  return r;
+}
+
+/** 批量状态/归档/加标签：单事务，任一失败整体回滚。 */
+export async function batchUpdate(ids: readonly string[], patch: BatchPatch): Promise<BatchResult> {
+  const r = await batchUpdateGarments((await readyDb()).db, ids, patch, Date.now());
+  await persist();
+  return r;
+}
+
+/** 状态历史（时间升序）。 */
+export async function getStatusHistory(id: string): Promise<GarmentStatusEventRow[]> {
+  return listGarmentStatusEvents((await readyDb()).db, id);
+}
+
+/** 详情统计：真实穿着次数/最近时间/成本次/使用造型。 */
+export async function getGarmentStatsById(id: string): Promise<GarmentStats | null> {
+  const app = await readyDb();
+  const g = await app.db.getActiveGarment(id);
+  if (!g) return null;
+  return getGarmentStats(app.drizzleDb, g);
+}
+
+/** TDY-07 穿后洗护联动：skip 不写库；任一不存在整体回滚。 */
+export async function applyPostWear(
+  decisions: readonly { garmentId: string; action: PostWearAction }[],
+): Promise<PostWearResult> {
+  const r = await applyPostWearCare((await readyDb()).db, decisions, Date.now());
+  await persist();
+  return r;
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */

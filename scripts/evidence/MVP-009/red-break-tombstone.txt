@@ -1,0 +1,25 @@
+  ● movePlanCore / deletePlanCore › 删除是墓碑：列表消失但行保留，且关联造型不被误删
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 0
+    Received length: 1
+    Received array:  [{"changeNote": null, "completedAt": null, "createdAt": 1785641447873, "date": "2026-07-28", "deletedAt": 1785641447876, "id": "019fc086-31c1-7000-ab58-b78f90ef7eba", "lookId": "look-x", "note": null, "occasion": null, "outfitJson": "[\"g1\"]", "status": "planned", "timeLabel": "白天", "updatedAt": 1785641447876}]
+
+      128 |     const p = await savePlanCore(t.db, { date: '2026-07-28', timeLabel: '白天', lookId: 'look-x' });
+      129 |     await deletePlanCore(t.db, p.plan.id);
+    > 130 |     expect(await plansForDateCore(t.db, '2026-07-28')).toHaveLength(0);
+          |                                                        ^
+      131 |     const look = await t.db.getLook('look-x');
+      132 |     expect(look).not.toBeNull();
+      133 |     expect(look!.deletedAt).toBeNull();
+
+      at Object.toHaveLength (src/core/plan/planService.test.ts:130:56)
+      at asyncGeneratorStep (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:3:17)
+      at _next (../../node_modules/@babel/runtime/helpers/asyncToGenerator.js:17:9)
+
+Test Suites: 1 failed, 2 passed, 3 total
+Tests:       1 failed, 36 passed, 37 total
+Snapshots:   0 total
+Time:        1.29 s, estimated 2 s
+exit=1

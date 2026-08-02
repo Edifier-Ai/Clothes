@@ -26,12 +26,15 @@ import {
 } from '../db/schema';
 
 /**
- * 持久化镜像 v4（B-4 设备适配）。
+ * 持久化镜像 v6（B-4 设备适配）。
  *
  * 本机 expo-sqlite 提交不 fsync，进程被杀即丢最近写入；expo-file-system 写文件跨强杀持久。
  * 故以本镜像为持久事实源：每次写后全量 JSON 落盘，启动时若镜像较新则回灌 SQLite。
  * v2 加入 cutoutJobs + maskStrokes；v3 加入 recommendations + recommendation_items + reason_codes
- * + wear_logs + wear_log_items，使推荐快照与穿着记录也跨强杀恢复；v4 加入反馈和天气缓存。
+ * + wear_logs + wear_log_items，使推荐快照与穿着记录也跨强杀恢复；v4 加入反馈和天气缓存；
+ * v5 加入 garment_status_events（随 GarmentDump.statusEvents，MVP-007 状态历史）；
+ * v6 加入 looks + look_items（随 GarmentDump.looks/lookItems，MVP-008 造型）；
+ * v7 加入 plans（随 GarmentDump.plans，MVP-009 计划）。
  */
 
 const MIRROR_REL = 'garments_mirror.json';
@@ -42,6 +45,49 @@ export interface RecDump {
   reasonCodes: ReasonCodeRow[];
   wearLogs: WearLogRow[];
   wearLogItems: WearLogItemRow[];
+}
+
+export interface MirrorFileV7 extends GarmentDump {
+  version: 7;
+  updatedAt: number;
+  cutoutJobs: CutoutJobRow[];
+  maskStrokes: MaskStrokeRow[];
+  recommendations: RecommendationRow[];
+  recommendationItems: RecommendationItemRow[];
+  reasonCodes: ReasonCodeRow[];
+  wearLogs: WearLogRow[];
+  wearLogItems: WearLogItemRow[];
+  feedbackEvents: FeedbackEventRow[];
+  weatherCache: WeatherCacheRow[];
+}
+
+/** v6 镜像（兼容旧文件读取；plans 在 GarmentDump 内为可选，回灌按空处理）。 */
+export interface MirrorFileV6 extends GarmentDump {
+  version: 6;
+  updatedAt: number;
+  cutoutJobs: CutoutJobRow[];
+  maskStrokes: MaskStrokeRow[];
+  recommendations: RecommendationRow[];
+  recommendationItems: RecommendationItemRow[];
+  reasonCodes: ReasonCodeRow[];
+  wearLogs: WearLogRow[];
+  wearLogItems: WearLogItemRow[];
+  feedbackEvents: FeedbackEventRow[];
+  weatherCache: WeatherCacheRow[];
+}
+
+export interface MirrorFileV5 extends GarmentDump {
+  version: 5;
+  updatedAt: number;
+  cutoutJobs: CutoutJobRow[];
+  maskStrokes: MaskStrokeRow[];
+  recommendations: RecommendationRow[];
+  recommendationItems: RecommendationItemRow[];
+  reasonCodes: ReasonCodeRow[];
+  wearLogs: WearLogRow[];
+  wearLogItems: WearLogItemRow[];
+  feedbackEvents: FeedbackEventRow[];
+  weatherCache: WeatherCacheRow[];
 }
 
 export interface MirrorFileV4 extends GarmentDump {
@@ -78,7 +124,14 @@ export interface MirrorFileV2 extends GarmentDump {
   maskStrokes: MaskStrokeRow[];
 }
 
-export type MirrorFile = MirrorFileV4 | MirrorFileV3 | MirrorFileV2 | (GarmentDump & { version: 1; updatedAt: number });
+export type MirrorFile =
+  | MirrorFileV7
+  | MirrorFileV6
+  | MirrorFileV5
+  | MirrorFileV4
+  | MirrorFileV3
+  | MirrorFileV2
+  | (GarmentDump & { version: 1; updatedAt: number });
 
 function mirrorPath(rootAbs: string): string {
   return `${rootAbs}/${MIRROR_REL}`;
@@ -128,7 +181,7 @@ export async function writeMirror(
     wearLogs: [], wearLogItems: [],
     feedbackEvents: [], weatherCache: [],
   };
-  const payload: MirrorFileV4 = { version: 4, updatedAt: now, ...dump, ...extra };
+  const payload: MirrorFileV7 = { version: 7, updatedAt: now, ...dump, ...extra };
   await FileSystem.writeAsStringAsync(mirrorPath(rootAbs), JSON.stringify(payload), {
     encoding: FileSystem.EncodingType.UTF8,
   });
@@ -181,8 +234,10 @@ export async function restoreFromMirrorIfNeeded(
     if (mirror.version >= 2 && drizzleDb) {
       // v2 镜像没有 v3 字段，按空数组回灌（删表后重插空）
       const base = mirror as MirrorFileV2;
-      const v4: MirrorFileV4 = mirror.version === 4
-        ? (mirror as MirrorFileV4)
+      const v4: MirrorFileV4 = mirror.version >= 4
+        ? // v4/v5/v6 的扩展表结构一致；v5 的 statusEvents、v6 的 looks/lookItems
+          // 都在 GarmentDump 内由 replaceAll 恢复
+          (mirror as MirrorFileV4)
         : mirror.version === 3
           ? {
               ...(mirror as MirrorFileV3),

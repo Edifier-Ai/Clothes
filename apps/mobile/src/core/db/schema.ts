@@ -134,8 +134,30 @@ export type GarmentCategory =
 
 export type GarmentStatus = 'clean' | 'worn' | 'laundry' | 'dryclean' | 'loaned' | 'wishlist';
 
-export const TAG_KINDS = ['color', 'season', 'occasion', 'material', 'formality'] as const;
+export const TAG_KINDS = ['color', 'season', 'occasion', 'material', 'formality', 'brand', 'note'] as const;
 export type TagKind = (typeof TAG_KINDS)[number];
+
+/**
+ * 状态变化历史（MVP-007）：每次状态/归档变化落一行，含时间戳。
+ * to_status 取值：clean | laundry | dryclean | loaned | worn | wishlist | archived | restored。
+ */
+export const garmentStatusEvents = sqliteTable(
+  'garment_status_events',
+  {
+    id: text('id').primaryKey(),
+    garmentId: text('garment_id')
+      .notNull()
+      .references(() => garments.id, { onDelete: 'cascade' }),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status').notNull(),
+    changedAt: integer('changed_at').notNull(),
+  },
+  (t) => ({
+    garmentTimeIdx: index('garment_status_events_garment_time_idx').on(t.garmentId, t.changedAt),
+  }),
+);
+
+export type GarmentStatusEventRow = typeof garmentStatusEvents.$inferSelect;
 
 export type CutoutJobRow = typeof cutoutJobs.$inferSelect;
 export type MaskStrokeRow = typeof maskStrokes.$inferSelect;
@@ -244,6 +266,103 @@ export const weatherCache = sqliteTable('weather_cache', {
   conditionCode: text('condition_code').notNull(),
   provider: text('provider').notNull(),
 });
+
+/**
+ * 造型（MVP-008）。
+ * - looks：一套可复用造型。mode：'slots'（快速槽位）| 'canvas'（自由画布）。
+ *   source_look_id 仅变体指向原造型（克隆为 NULL）；cover_rel_path 为派生封面，
+ *   可随时由事实数据（look_items + 衣物资产）重建，不作唯一事实。
+ *   删除采用墓碑（deleted_at），不物理删除。
+ * - look_items：造型内一件衣物的摆放。快速模式 slot 取 top/bottom/dress/shoes/
+ *   outerwear/accessory，canvas 模式为 NULL。坐标归一化：x/y ∈ [0,1] 相对画布宽/高；
+ *   scale 基准为相对画布宽度的比例；rotation 为弧度（rad）。z_index 升序即绘制顺序，
+ *   ord 为同层稳定次序。
+ */
+export const looks = sqliteTable(
+  'looks',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    mode: text('mode').notNull(), // slots | canvas
+    sourceLookId: text('source_look_id'),
+    coverRelPath: text('cover_rel_path'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    activeIdx: index('looks_active_idx').on(t.deletedAt, t.updatedAt),
+  }),
+);
+
+export const lookItems = sqliteTable(
+  'look_items',
+  {
+    id: text('id').primaryKey(),
+    lookId: text('look_id')
+      .notNull()
+      .references(() => looks.id, { onDelete: 'cascade' }),
+    /** 不做外键：衣物归档/墓碑不阻塞造型读取（封面用占位项）。 */
+    garmentId: text('garment_id').notNull(),
+    slot: text('slot'), // 快速模式槽位；canvas 为 NULL
+    x: real('x').notNull().default(0.5),
+    y: real('y').notNull().default(0.5),
+    scale: real('scale').notNull().default(1),
+    rotation: real('rotation').notNull().default(0), // 弧度
+    zIndex: integer('z_index').notNull(),
+    ord: integer('ord').notNull(),
+  },
+  (t) => ({
+    lookIdx: index('look_items_look_idx').on(t.lookId, t.zIndex, t.ord),
+    garmentIdx: index('look_items_garment_idx').on(t.garmentId),
+  }),
+);
+
+export type LookRow = typeof looks.$inferSelect;
+export type LookItemRow = typeof lookItems.$inferSelect;
+
+export type LookMode = 'slots' | 'canvas';
+export type LookSlot = 'top' | 'bottom' | 'dress' | 'shoes' | 'outerwear' | 'accessory';
+
+/**
+ * 计划（MVP-009）：把造型/临时组合安排到当地日期。
+ * - date 为「用户当地日期」字面量（YYYY-MM-DD），不是 epoch——设备切换时区后
+ *   日期语义不偏移（任务卡验收：时区切换无日期偏移/重复记录）。
+ * - look_id 关联现有造型（不设外键：造型墓碑不阻塞计划读取）；
+ *   NULL 表示临时组合。outfit_json 始终是单品 id 快照：关联造型在保存时展开，
+ *   造型被删/单品归档后计划仍有完整数据支撑展示与修复入口。
+ * - 实际已穿与计划同表分列（status/completed_at/change_note），不写入
+ *   recommendations/wear_logs——计划记录与今日推荐记录是两条独立事实。
+ *   幂等：completed/changed 后再次记录不改 completed_at。
+ * - 删除采用墓碑（deleted_at），编辑/移动/删除均可恢复，绝不误删造型本身。
+ */
+export const plans = sqliteTable(
+  'plans',
+  {
+    id: text('id').primaryKey(),
+    /** YYYY-MM-DD 当地日期字面量。 */
+    date: text('date').notNull(),
+    /** 时间段标签，如 白天/晚餐/自定义文本。 */
+    timeLabel: text('time_label').notNull(),
+    occasion: text('occasion'),
+    lookId: text('look_id'),
+    /** JSON string[]：单品 id 快照（关联造型保存时展开；临时组合即所选）。 */
+    outfitJson: text('outfit_json').notNull(),
+    note: text('note'),
+    status: text('status').notNull().default('planned'), // planned | completed | changed
+    completedAt: integer('completed_at'),
+    changeNote: text('change_note'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    dateIdx: index('plans_date_idx').on(t.deletedAt, t.date),
+  }),
+);
+
+export type PlanRow = typeof plans.$inferSelect;
+export type PlanStatus = 'planned' | 'completed' | 'changed';
 
 export type RecommendationRow = typeof recommendations.$inferSelect;
 export type RecommendationItemRow = typeof recommendationItems.$inferSelect;

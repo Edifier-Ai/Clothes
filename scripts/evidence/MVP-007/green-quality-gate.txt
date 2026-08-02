@@ -1,0 +1,13 @@
+# GREEN: 两处破坏还原后全量质量门（2026-08-01）
+## tsc --noEmit
+typecheck exit 0
+## jest 全量
+Test Suites: 30 passed, 30 total
+Tests:       236 passed, 236 total
+Snapshots:   0 total
+Time:        3.453 s
+Ran all test suites.
+## expo lint
+✖ 9 problems (0 errors, 9 warnings)
+  0 errors and 6 warnings potentially fixable with the `--fix` option.
+

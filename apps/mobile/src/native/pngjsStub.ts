@@ -5,8 +5,9 @@
  * Metro 在 native 平台把 `pngjs` 重定向到本桩（见 metro.config.js resolveRequest），
  * 使主 bundle 不再遍历 pngjs 的 Node 依赖，app 方可启动。
  *
- * 抠图管线（deviceIO/devicePixelReader/cutout-editor）在设备本就 B-6 阻塞（Skia 未链接），
- * 故桩在运行时抛错是可接受的；host 单测不经 Metro，仍用真实 pngjs。
+ * 2026-08-01 起设备端 PNG 编解码已改走 Skia（`src/native/skiaPngCodec.ts`），
+ * deviceIO/devicePixelReader/cutout-editor 不再 require pngjs；本桩保留作兜底，
+ * 防止未来误引入 pngjs 时静默打进 bundle。host 单测不经 Metro，仍用真实 pngjs。
  */
 export class PNG {
   static sync = {

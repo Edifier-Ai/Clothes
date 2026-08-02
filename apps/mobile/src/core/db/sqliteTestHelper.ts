@@ -4,17 +4,21 @@ import path from 'path';
 
 import Database, { type Database as DatabaseT } from 'better-sqlite3';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 
 import * as schema from './schema';
-import { garmentAssets, garmentTags, garments } from './schema';
+import { garmentAssets, garmentStatusEvents, garmentTags, garments, lookItems, looks, plans } from './schema';
 import type {
   GarmentAssetRow,
   GarmentRow,
+  GarmentStatusEventRow,
   GarmentTagRow,
+  LookItemRow,
+  LookRow,
+  PlanRow,
 } from './schema';
 import type { GarmentDb, GarmentDbOps } from './dao';
-import { runMigrations, type QueryableMigrationAdapter } from './migrations';
+import { MIGRATIONS, runMigrations, type QueryableMigrationAdapter } from './migrations';
 
 /**
  * 测试用 sqlite 助手（better-sqlite3，同步、真实 sqlite、Windows 预编译）。
@@ -84,6 +88,25 @@ function opsOf(d: BetterSQLite3Database<typeof schema>, raw: DatabaseT): Garment
       d.update(garments).set({ deletedAt, updatedAt }).where(eq(garments.id, id)).run();
       return Promise.resolve();
     },
+    insertStatusEvent: (row) => {
+      d.insert(garmentStatusEvents).values(row).run();
+      return Promise.resolve();
+    },
+    listStatusEventsByGarment: (id) =>
+      Promise.resolve(
+        d
+          .select()
+          .from(garmentStatusEvents)
+          .where(eq(garmentStatusEvents.garmentId, id))
+          .orderBy(asc(garmentStatusEvents.changedAt))
+          .all() as GarmentStatusEventRow[],
+      ),
+    getAllStatusEvents: () =>
+      Promise.resolve(d.select().from(garmentStatusEvents).all() as GarmentStatusEventRow[]),
+    deleteAllStatusEvents: () => {
+      d.delete(garmentStatusEvents).run();
+      return Promise.resolve();
+    },
     getGarment: (id) =>
       Promise.resolve(
         (d.select().from(garments).where(eq(garments.id, id)).get() as GarmentRow | undefined) ?? null,
@@ -128,6 +151,82 @@ function opsOf(d: BetterSQLite3Database<typeof schema>, raw: DatabaseT): Garment
     },
     deleteAllGarments: () => {
       d.delete(garments).run();
+      return Promise.resolve();
+    },
+    insertLook: (row) => {
+      d.insert(looks).values(row).run();
+      return Promise.resolve();
+    },
+    insertLookItems: (rows) => {
+      if (rows.length === 0) return Promise.resolve();
+      d.insert(lookItems).values(rows).run();
+      return Promise.resolve();
+    },
+    getLook: (id) =>
+      Promise.resolve(
+        (d.select().from(looks).where(eq(looks.id, id)).get() as LookRow | undefined) ?? null,
+      ),
+    listLooks: () =>
+      Promise.resolve(
+        d
+          .select()
+          .from(looks)
+          .where(isNull(looks.deletedAt))
+          .orderBy(desc(looks.updatedAt))
+          .all() as LookRow[],
+      ),
+    getLookItems: (lookId) =>
+      Promise.resolve(
+        d
+          .select()
+          .from(lookItems)
+          .where(eq(lookItems.lookId, lookId))
+          .orderBy(asc(lookItems.zIndex), asc(lookItems.ord))
+          .all() as LookItemRow[],
+      ),
+    updateLook: (id, fields) => {
+      d.update(looks).set(fields).where(eq(looks.id, id)).run();
+      return Promise.resolve();
+    },
+    deleteLookItemsByLook: (lookId) => {
+      d.delete(lookItems).where(eq(lookItems.lookId, lookId)).run();
+      return Promise.resolve();
+    },
+    getAllLooks: () => Promise.resolve((d.select().from(looks).all() as LookRow[]) ?? []),
+    getAllLookItems: () =>
+      Promise.resolve((d.select().from(lookItems).all() as LookItemRow[]) ?? []),
+    deleteAllLooks: () => {
+      d.delete(looks).run();
+      return Promise.resolve();
+    },
+    deleteAllLookItems: () => {
+      d.delete(lookItems).run();
+      return Promise.resolve();
+    },
+    insertPlan: (row) => {
+      d.insert(plans).values(row).run();
+      return Promise.resolve();
+    },
+    getPlan: (id) =>
+      Promise.resolve(
+        (d.select().from(plans).where(eq(plans.id, id)).get() as PlanRow | undefined) ?? null,
+      ),
+    listActivePlans: () =>
+      Promise.resolve(
+        d
+          .select()
+          .from(plans)
+          .where(isNull(plans.deletedAt))
+          .orderBy(asc(plans.date), asc(plans.createdAt))
+          .all() as PlanRow[],
+      ),
+    updatePlan: (id, fields) => {
+      d.update(plans).set(fields).where(eq(plans.id, id)).run();
+      return Promise.resolve();
+    },
+    getAllPlans: () => Promise.resolve((d.select().from(plans).all() as PlanRow[]) ?? []),
+    deleteAllPlans: () => {
+      d.delete(plans).run();
       return Promise.resolve();
     },
     getMetaInt: (key) => {
@@ -191,6 +290,8 @@ function tmpDbPath(): string {
   );
 }
 
+const META_DDL_FOR_TEST = `CREATE TABLE IF NOT EXISTS __clothes_meta (key TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL);`;
+
 export interface TestDb {
   raw: DatabaseT;
   adapter: QueryableMigrationAdapter;
@@ -226,6 +327,43 @@ async function openAt(filePath: string, migrate: boolean): Promise<TestDb> {
 /** 新建临时库并应用全部迁移。 */
 export async function openTestDb(): Promise<TestDb> {
   return openAt(tmpDbPath(), true);
+}
+
+/**
+ * 新建临时库并只应用到指定版本（测试版本升级用，如 v5→v6 数据保留）。
+ * 之后可对返回的 adapter 调 runMigrations 升级到最新。
+ */
+export async function openTestDbAtVersion(maxVersion: number): Promise<TestDb> {
+  const filePath = tmpDbPath();
+  const raw = new Database(filePath);
+  const adapter = wrap(raw);
+  await adapter.exec('PRAGMA foreign_keys=ON;');
+  await adapter.exec(META_DDL_FOR_TEST);
+  for (const m of MIGRATIONS.filter((m) => m.version <= maxVersion)) {
+    await adapter.exec('BEGIN;');
+    await adapter.exec(m.sql);
+    await adapter.exec(
+      `INSERT INTO __clothes_meta(key,value) VALUES('schema_version',${m.version}) ` +
+        `ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
+    );
+    await adapter.exec('COMMIT;');
+  }
+  const drizzleDb = drizzle(raw, { schema });
+  return {
+    raw,
+    adapter,
+    db: buildGarmentDb(raw),
+    drizzleDb,
+    filePath,
+    close: () => {
+      raw.close();
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
 
 /** 关闭当前库并以同一文件重新打开（不再迁移），模拟进程重启。 */

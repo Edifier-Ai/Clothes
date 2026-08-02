@@ -2,10 +2,9 @@
  * 基准运行器：读 manifest → 对每个候选跑逐图分割 → 计算 IoU/分级/耗时 → 写逐图结果 +
  * 联系表 PNG + 报告 JSON/MD。损坏图/损坏模型走 catch，标 errored，绝不崩溃、绝不伪造。
  *
- * 用法：npx tsx scripts/segmentation-benchmark/runBenchmark.ts [--segmenter stub|onnx|all] [--tag NAME]
+ * 用法：npx tsx scripts/segmentation-benchmark/runBenchmark.ts [--segmenter stub|tencent|all] [--tag NAME]
  */
-import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,14 +12,17 @@ import { PNG } from 'pngjs';
 import type { Manifest } from './generateFixtures';
 import { grade, iou, pixelAccuracy, summarize, type Grade, type Summary } from './metrics';
 import { decodePNG, rgbaToGray, type RGBA } from './pngUtil';
-import { OnnxSegmenter, StubSegmenter, type Segmenter } from './segmenter';
+import { StubSegmenter, type Segmenter } from './segmenter';
+import { TencentCiSegmenter, loadTencentCiConfigFromFile } from './tencentCi';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PRIVATE = join(here, '.private');
 
 export interface Args {
-  segmenter: 'stub' | 'onnx' | 'all';
+  segmenter: 'stub' | 'tencent' | 'all';
   tag: string;
+  /** .private 下的清单文件名，默认 manifest.json；子集基准用独立清单 */
+  manifest: string;
 }
 
 export interface PerImageResult {
@@ -51,21 +53,17 @@ export interface RunReport {
 }
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { segmenter: 'stub', tag: 'run' };
+  const a: Args = { segmenter: 'stub', tag: 'run', manifest: 'manifest.json' };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--segmenter') a.segmenter = argv[++i] as Args['segmenter'];
     if (argv[i] === '--tag') a.tag = argv[++i];
+    if (argv[i] === '--manifest') a.manifest = argv[++i];
   }
   return a;
 }
 
 function safeDecode(path: string): RGBA {
   return decodePNG(readFileSync(path)); // 损坏 PNG 在此抛错
-}
-
-function sha256File(p: string): string {
-  if (!existsSync(p)) return '';
-  return createHash('sha256').update(readFileSync(p)).digest('hex');
 }
 
 function thumb(src: RGBA, tw: number, th: number, tint?: [number, number, number]): Buffer {
@@ -169,12 +167,13 @@ function renderMarkdown(r: RunReport): string {
 }
 
 export async function runBenchmarkAsync(args: Args): Promise<RunReport> {
-  const manifest = JSON.parse(readFileSync(join(PRIVATE, 'manifest.json'), 'utf8')) as Manifest;
+  const manifest = JSON.parse(readFileSync(join(PRIVATE, args.manifest), 'utf8')) as Manifest;
   const segmenters: Segmenter[] = [];
   if (args.segmenter === 'stub' || args.segmenter === 'all') segmenters.push(new StubSegmenter());
-  if (args.segmenter === 'onnx' || args.segmenter === 'all') {
-    const mp = join(PRIVATE, 'models', 'u2netp.onnx');
-    segmenters.push(new OnnxSegmenter({ name: 'u2netp-onnx', modelPath: existsSync(mp) ? mp : undefined, modelHash: sha256File(mp) }));
+  if (args.segmenter === 'tencent' || args.segmenter === 'all') {
+    // 凭证缺失时 TencentCiSegmenter available=false，逐图记 errored（原因=配置不可用），不伪造。
+    const configPath = join(PRIVATE, 'tencent-ci.json');
+    segmenters.push(new TencentCiSegmenter({ loadConfig: () => loadTencentCiConfigFromFile(configPath) }));
   }
 
   const perImage: PerImageResult[] = [];

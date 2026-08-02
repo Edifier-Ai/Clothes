@@ -4,7 +4,7 @@
 
 - 产品方案：`PRODUCT_PLAN.md`
 - 技术边界：`TECH_STACK.md`（React Native + Expo Development Build + TypeScript strict）
-- 设计基准：`design/directions/direction-3-quiet-luxury.png` 与 `design/screens/direction-3-quiet-luxury/`
+- 设计基准：`design/HIGH_FIDELITY_UI_SPEC.md` 与 `design/screens/direction-3-quiet-luxury/`
 - 任务卡与执行状态：`tasks/ROADMAP.md`、`tasks/EXECUTION_STATE.md`
 
 ## 环境（本机实测基线，2026-07-27）
@@ -42,22 +42,29 @@ pnpm start
 pnpm --filter @clothes/mobile run android:debug
 ```
 
-`android/` 与 `ios/` 是 prebuild 产物，已被 `.gitignore`；配置来源只有 `app.json` 与 `metro.config.js`，任何时候可删除重新生成。
+`android/` 与 `ios/` 是被忽略的 prebuild 产物；不要手工维护其中的业务配置。新增原生依赖后必须重新 prebuild，再构建新的 APK。
 
 ## 目录
 
 ```text
 apps/mobile/
-  app/(tabs)/          Expo Router 四标签：今天/衣橱/造型/计划
+  src/app/(tabs)/      Expo Router 四标签：今天/衣橱/造型/计划
   src/core/            数据库、文件、任务队列（MVP-001+）
   src/domain/          领域模型与推荐规则（MVP-005+）
   src/features/        按用户闭环组织的页面与组件
   src/design-system/   方向 3 tokens（色板/字号/间距/圆角/点击目标）
-  src/native/          端侧推理与平台适配（MVP-002+）
+  src/native/          腾讯云抠图、签名与平台文件适配（MVP-002+）
 packages/              可序列化契约与导出格式（MVP-013+）
 scripts/               环境核对与验收脚本
 ```
 
+## 当前状态（2026-08-01）
+
+- 当前任务：MVP-006 `BLOCKED`；实现与模拟器证据完成，仍缺物理 Android 的 TDY-03/04/05/08 截图和离线录屏。
+- 抠图：腾讯云 GoodsMatting 为现役唯一路径；上传前明确告知并取得同意，密钥只存 SecureStore，断网可排队/跳过/仅保存原图。
+- 本轮质量门：TypeScript 0 错误；21 suites / 164 tests / 0 skipped；ESLint 0 errors / 14 warnings。测试仍有一条 React `act(...)` 控制台 warning。
+- 设备/包：实体设备已连接但 ADB 未授权；当前副本未生成 APK，真机复验前须重新 prebuild+构建。
+
 ## 红线
 
-原图永不覆盖；父级 `C:\Users\Admin\Desktop` 是无关 Git 工作树，本仓库不暂存、不清理其任何内容；无账号、无业务后端、无付费 AI。
+原图永不覆盖；当前 Git 根必须保持为 `D:/Projects/Clothes`，不暂存、不清理范围外内容；P0 无账号、无业务后端，除用户自配的抠图 API 与天气外不引入云依赖。

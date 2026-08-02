@@ -18,6 +18,8 @@ import {
   nextOrd,
   popLastStroke,
   recoverRunning,
+  requeueFailed,
+  requeuePending,
 } from './queue';
 import { openQueueTestDb } from './queueTestHelper';
 
@@ -105,6 +107,37 @@ describe('抠图队列状态机', () => {
     await enqueue(t.db, { id: 'j1', garmentId: 'g1', sourceStagedPath: '/1', now: 1 });
     await cancel(t.db, 'j1', 2);
     expect(await claimNext(t.db, 3)).toBeNull();
+    t.close();
+  });
+
+  it('requeuePending：临时失败回 pending，保留 attempts 与错误码', async () => {
+    const t = openQueueTestDb();
+    await seedGarment(t.db, 'g1');
+    await enqueue(t.db, { id: 'j1', garmentId: 'g1', sourceStagedPath: '/1', now: 1 });
+    const claimed = await claimNext(t.db, 2);
+    expect(claimed!.attempts).toBe(1);
+    await requeuePending(t.db, 'j1', 'TypeError', 'Network request failed', 3);
+    const job = await getJob(t.db, 'j1');
+    expect(job!.status).toBe('pending');
+    expect(job!.attempts).toBe(1);
+    expect(job!.errorCode).toBe('TypeError');
+    t.close();
+  });
+
+  it('requeueFailed：failed → pending，重置 attempts 与错误信息，可再被 claim', async () => {
+    const t = openQueueTestDb();
+    await seedGarment(t.db, 'g1');
+    await enqueue(t.db, { id: 'j1', garmentId: 'g1', sourceStagedPath: '/1', now: 1 });
+    await claimNext(t.db, 2);
+    await markFailed(t.db, 'j1', 'ERROR', 'boom', 1, 3); // attempts=1 达上限 → failed
+    expect((await getJob(t.db, 'j1'))!.status).toBe('failed');
+    const n = await requeueFailed(t.db, 4);
+    expect(n).toBe(1);
+    const job = await getJob(t.db, 'j1');
+    expect(job!.status).toBe('pending');
+    expect(job!.attempts).toBe(0);
+    expect(job!.errorCode).toBeNull();
+    expect(await claimNext(t.db, 5)).not.toBeNull();
     t.close();
   });
 });
