@@ -3,6 +3,7 @@
 状态：P0 全部完成（MVP-014 ACCEPTED：Android P0 发布卡，Release APK v0.1.0 签名构建 + 真机闭环 + 飞行模式断网 + 升级迁移 + 反向验证 + 模拟器矩阵）
 当前任务：无 P0 待办（P1 队列待激活：MVP-012/013/P1-001/P1-002）
 最后更新：2026-08-02
+P0 代码入库：commit 1a574a1（feat(P0): finalize calendar/trips/insights and signed Android release，213 files +9668/-61，敏感文件 .gitignore 覆盖，release-keystore-setup.txt 明文密码脱敏为 <STOREPASS>，未推送远端）
 
 ## 开工回执（MVP-000/001）
 
