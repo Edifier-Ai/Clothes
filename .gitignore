@@ -42,3 +42,5 @@ scripts/evidence/MVP-014/device-backup/clothes-images.tar
 
 # Segmentation benchmark private samples/results (not committed; reproducible)
 scripts/segmentation-benchmark/.private/
+# Local evidence tooling (scrcpy/adb bundles, not project source)
+scripts/evidence/.tools/
