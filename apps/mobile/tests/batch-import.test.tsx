@@ -95,6 +95,7 @@ describe('batch-import：未配置抠图服务', () => {
   it('显示配置表单（4 输入框 + 保存按钮），不显示告知区块', async () => {
     await renderLoaded();
     expect(screen.getByText('配置抠图服务')).toBeOnTheScreen();
+    expect(screen.getByText(/CAM 子账号密钥/)).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('secretId')).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('secretKey')).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('bucket（BucketName-APPID）')).toBeOnTheScreen();
