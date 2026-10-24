@@ -15,7 +15,7 @@ import { describe, expect, it } from '@jest/globals';
 import { createGarment } from '../db/dao';
 import { openQueueTestDb } from '../db/queueTestHelper';
 import { recordWear } from '../recommend/wearLog';
-import type { Outfit } from '../recommend';
+import type { Outfit , GarmentForRec } from '../recommend';
 
 import {
   assembleFacts,
@@ -25,7 +25,6 @@ import {
   getOverviewCore,
 } from './insightsService';
 import { hasProtectedLeak, PROTECTED_FIELD_KEYS } from './metrics';
-import type { GarmentForRec } from '../recommend';
 
 // 锚点：2026-07-31 00:00:00 UTC = 1753920000000ms
 const ANCHOR = Date.UTC(2026, 6, 31);

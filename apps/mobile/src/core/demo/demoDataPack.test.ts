@@ -41,7 +41,7 @@ describe('DemoDataPack', () => {
     expect(pack.shoppingCandidates).toHaveLength(1);
     expect(pack.plans.map((plan) => plan.date)).toEqual(['2026-08-27', '2026-08-28', '2026-08-30', '2026-08-29', '2026-09-01', '2026-08-31', '2026-09-02']);
     expect(new Set(pack.garments.map((garment) => garment.id)).size).toBe(54);
-    expect(pack.garments.every((item) => item.asset.originalRelPath.endsWith('.png'))).toBe(true);
+    expect(pack.garments.every((item) => item.asset.originalRelPath.endsWith('.webp'))).toBe(true);
     expect(pack.garments.every((item) => item.asset.sha256.length === 64)).toBe(true);
     expect(new Set(pack.looks[0].items.map((item) => `${item.x}:${item.y}`)).size).toBeGreaterThan(1);
     expect(pack.looks.flatMap((item) => item.items).every((item) => item.scale < 0.5)).toBe(true);

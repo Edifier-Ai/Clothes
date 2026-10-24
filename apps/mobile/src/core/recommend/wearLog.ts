@@ -47,7 +47,7 @@ function outfitSlots(outfit: Outfit): { garmentId: string; slot: string }[] {
 
 /**
  * 记录一次穿着。幂等：同 recommendationId+date 已存在则不插入。
- * 设备事务由 expo-sqlite 的 withTransactionAsync 保证；better-sqlite3 在 transaction() 同步回调中执行。
+ * 本函数不自开事务：设备侧调用方用 `AppDb.withTransaction` 包裹，保证幂等检查与多表写入原子。
  */
 export async function recordWear(db: AnyDb, input: RecordWearInput): Promise<RecordWearResult> {
   // 幂等检查

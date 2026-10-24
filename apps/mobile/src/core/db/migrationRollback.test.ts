@@ -60,24 +60,7 @@ describe('MVP-014 反向验证：迁移失败 ROLLBACK + 修复后升级', () =>
       setMeta: (key: string, value: string) => t.adapter.setMeta(key, value),
     };
 
-    // 临时替换 MIGRATIONS 引用（runMigrations 内部读取模块级 MIGRATIONS，
-    // 此处通过直接调用验证 ROLLBACK 行为）
-    // 由于 MIGRATIONS 是 readonly 导出，我们直接验证 runMigrations 在遇到坏 SQL 时的行为：
-    // 手动执行 v6 坏 SQL，验证 ROLLBACK 后数据不丢
-    await t.adapter.exec('BEGIN;');
-    try {
-      await t.adapter.exec('CREATE TABLE broken_migration_test AS SELECT * FROM nonexistent_table;');
-      await t.adapter.exec('COMMIT;');
-      throw new Error('应该抛错但未抛');
-    } catch (err) {
-      // 预期失败：ROLLBACK
-      try {
-        await t.adapter.exec('ROLLBACK;');
-      } catch {
-        /* 已在回滚态 */
-      }
-      expect(err).toBeDefined();
-    }
+    await expect(runMigrations(brokenAdapter, { migrations: brokenMigrations })).rejects.toThrow();
 
     // 4. 验证 ROLLBACK 后 v5 数据完整保留
     const afterVersion = await t.adapter.scalarInt(

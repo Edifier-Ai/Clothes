@@ -11,7 +11,7 @@ export interface SkiaCanvasProps {
   scale: number;
   offset: { x: number; y: number };
   bg: Bg;
-  overlay: Array<{ x: number; y: number; w: number; h: number }>;
+  overlay: { x: number; y: number; w: number; h: number }[];
   tick: number;
 }
 

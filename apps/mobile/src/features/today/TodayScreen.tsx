@@ -409,14 +409,17 @@ export default function TodayScreen({
           if (r.inserted) openPostWearPanel(outfit);
         } else {
           const app = await openAppDb();
-          const r = await recordWear(app.drizzleDb, {
-            recommendationId: input.recommendationId,
-            date: input.date,
-            outfit: input.outfit,
-            occasion: input.occasion,
-            comfort: input.comfort,
-            now: input.now,
-          });
+          // 幂等检查 + wear_logs + wear_log_items 必须原子写入，避免只留下半条记录。
+          const r = await app.withTransaction(() =>
+            recordWear(app.drizzleDb, {
+              recommendationId: input.recommendationId,
+              date: input.date,
+              outfit: input.outfit,
+              occasion: input.occasion,
+              comfort: input.comfort,
+              now: input.now,
+            }),
+          );
           // 写持久镜像（B-4 兜底）
           const root = `${FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp'}/clothes`;
           await writeMirror(root, app.db, app.drizzleDb, nowVal);

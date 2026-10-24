@@ -17,12 +17,12 @@ function item(suffix: string, source: number): DemoGarmentCatalogItem {
     priceMinor: 100,
     asset: {
       source,
-      originalRelPath: `originals/demo-v1-${suffix}.png`,
+      originalRelPath: `originals/demo-v1-${suffix}.webp`,
       sha256: 'a'.repeat(64),
       width: 1254,
       height: 1254,
       bytes: 10,
-      mimeType: 'image/png',
+      mimeType: 'image/webp',
     },
   };
 }
@@ -34,7 +34,7 @@ describe('installBundledDemoAssets', () => {
     const copy = jest.fn(async () => undefined);
     const deps: DemoAssetInstallerDeps = {
       resolveSource,
-      exists: async (uri) => uri.endsWith('top-01.png'),
+      exists: async (uri) => uri.endsWith('top-01.webp'),
       ensureParent,
       copy,
       destination: (relPath) => `private://${relPath}`,
@@ -44,7 +44,7 @@ describe('installBundledDemoAssets', () => {
 
     expect(resolveSource).toHaveBeenCalledTimes(1);
     expect(resolveSource).toHaveBeenCalledWith(2);
-    expect(ensureParent).toHaveBeenCalledWith('private://originals/demo-v1-top-02.png');
-    expect(copy).toHaveBeenCalledWith('bundle://2', 'private://originals/demo-v1-top-02.png');
+    expect(ensureParent).toHaveBeenCalledWith('private://originals/demo-v1-top-02.webp');
+    expect(copy).toHaveBeenCalledWith('bundle://2', 'private://originals/demo-v1-top-02.webp');
   });
 });

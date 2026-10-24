@@ -33,20 +33,28 @@ import type { GarmentDb, GarmentDbOps } from './dao';
 import { runMigrations, type QueryableMigrationAdapter } from './migrations';
 
 /**
- * 设备侧数据库工厂：expo-sqlite **异步 API** + Drizzle ORM。
+ * 设备侧数据库工厂：expo-sqlite + Drizzle ORM。
  *
- * 为何异步：本机实测同步 API（openDatabaseSync/execSync）写入不落盘（库文件 mtime 不变，
- * 重启丢数据），违反「数据不丢」。异步 API 的 runAsync/withTransactionAsync 正确提交，
- * 配合写后 closeAsync 强制 fsync，保证强杀/断电不丢已提交写入。
+ * 注意：drizzle-orm/expo-sqlite 驱动内部走同步 API（prepareSync/executeSync），
+ * 普通读写都是同步执行的；多语句原子性只能靠 `transaction`/`withTransaction`
+ * （见 createTransactionRunner），不要直接用 drizzle 的 `d.transaction(async ...)`。
+ * 持久性另由 garments/mirror.ts 的 JSON 镜像兜底（BLOCKED.md B-4）。
  */
 
 const DB_NAME = 'clothes.db';
+
+// __clothes_meta 读写一律参数绑定，不拼接 SQL 字符串。
+const META_SELECT_SQL = 'SELECT value FROM __clothes_meta WHERE key = ?';
+const META_UPSERT_SQL =
+  'INSERT INTO __clothes_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value';
 
 export interface AppDb {
   db: GarmentDb;
   raw: SQLiteDatabase;
   /** drizzle 实例（队列/管线等需要直接表访问的模块使用） */
   drizzleDb: ExpoSQLiteDatabase<typeof schema>;
+  /** 在与 `db.transaction` 共用的串行队列里执行一个事务（drizzleDb/raw 写入都可放进来）。 */
+  withTransaction: TransactionRunner;
   /** 写操作后调用：关闭+重开连接，强制落盘。 */
   flush: () => Promise<void>;
   close: () => Promise<void>;
@@ -361,36 +369,52 @@ function opsOf(d: ExpoSQLiteDatabase<typeof schema>, raw: SQLiteDatabase): Garme
       return row?.value == null ? null : Number(row.value);
     },
     setMetaInt: (key, value) => {
-      raw.execSync(
-        `INSERT INTO __clothes_meta(key,value) VALUES('${key}',${value}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
-      );
+      raw.runSync(META_UPSERT_SQL, [key, value]);
       return Promise.resolve();
     },
     getMeta: async (key) => {
-      const row = raw.getFirstSync<Record<string, unknown>>(`SELECT value FROM __clothes_meta WHERE key='${key}'`);
+      const row = raw.getFirstSync<Record<string, unknown>>(META_SELECT_SQL, [key]);
       return row?.value == null ? null : String(row.value);
     },
     setMeta: async (key, value) => {
-      const esc = value.replace(/'/g, "''");
-      raw.execSync(
-        `INSERT INTO __clothes_meta(key,value) VALUES('${key}','${esc}') ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
-      );
+      raw.runSync(META_UPSERT_SQL, [key, value]);
     },
   };
 }
 
-function buildGarmentDb(raw: SQLiteDatabase): GarmentDb {
+type TransactionRunner = <T>(work: () => Promise<T>) => Promise<T>;
+
+/**
+ * 同一连接上的串行事务。
+ *
+ * 不能用 drizzle 的 `d.transaction(async ...)`：expo-sqlite 驱动是同步模式，回调一返回
+ * Promise 就 COMMIT，第一个 await 之后的语句全在事务外、抛错也不回滚。这里改用
+ * expo-sqlite 的 withTransactionAsync（BEGIN → await task → COMMIT/ROLLBACK），
+ * 并用 Promise 链串行化，避免并发调用在同一连接上嵌套 BEGIN。
+ */
+function createTransactionRunner(raw: SQLiteDatabase): TransactionRunner {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const next = tail
+      .catch(() => undefined)
+      .then(async () => {
+        let result!: T;
+        await raw.withTransactionAsync(async () => {
+          result = await work();
+        });
+        return result;
+      });
+    tail = next;
+    return next;
+  };
+}
+
+function buildGarmentDb(raw: SQLiteDatabase, runTransaction: TransactionRunner): GarmentDb {
   const d = drizzle(raw, { schema });
   const outer = opsOf(d, raw);
   return {
     ...outer,
-    transaction: async <T>(fn: (tx: GarmentDbOps) => Promise<T>): Promise<T> => {
-      let result: T;
-      await d.transaction(async (txd) => {
-        result = await fn(opsOf(txd, raw));
-      });
-      return result!;
-    },
+    transaction: <T>(fn: (tx: GarmentDbOps) => Promise<T>): Promise<T> => runTransaction(() => fn(outer)),
   };
 }
 
@@ -411,24 +435,23 @@ async function build(): Promise<AppDb> {
       return v == null ? null : Number(v);
     },
     getMeta: async (key) => {
-      const row = (await raw.getFirstAsync<Record<string, unknown>>(
-        `SELECT value FROM __clothes_meta WHERE key='${key}'`,
-      )) as { value?: string | null } | null;
+      const row = (await raw.getFirstAsync<Record<string, unknown>>(META_SELECT_SQL, [key])) as {
+        value?: string | null;
+      } | null;
       return row?.value == null ? null : String(row.value);
     },
     setMeta: async (key, value) => {
-      const esc = value.replace(/'/g, "''");
-      await raw.execAsync(
-        `INSERT INTO __clothes_meta(key,value) VALUES('${key}','${esc}') ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
-      );
+      await raw.runAsync(META_UPSERT_SQL, [key, value]);
     },
   };
   await runMigrations(adapter, { journalMode: 'DELETE' });
   const drizzleDb = drizzle(raw, { schema });
+  const withTransaction = createTransactionRunner(raw);
   return {
-    db: buildGarmentDb(raw),
+    db: buildGarmentDb(raw, withTransaction),
     raw,
     drizzleDb,
+    withTransaction,
     flush: flushDb,
     close: async () => {
       await raw.closeAsync();
@@ -452,4 +475,11 @@ export async function flushDb(): Promise<void> {
     current = null;
   }
   current = await build();
+}
+
+/** 仅测试：关闭并丢弃单例连接。 */
+export async function closeAppDbForTest(): Promise<void> {
+  if (!current) return;
+  await current.raw.closeAsync().catch(() => undefined);
+  current = null;
 }

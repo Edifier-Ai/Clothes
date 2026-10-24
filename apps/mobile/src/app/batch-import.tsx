@@ -301,6 +301,9 @@ export default function BatchImportScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>配置抠图服务</Text>
           <Text style={styles.cardHint}>填入腾讯云数据万象凭证，仅保存在本机安全存储。</Text>
+          <Text style={styles.cardHint}>
+            建议使用 CAM 子账号密钥，只授权该存储桶的上传、下载、删除对象权限，不要填写主账号密钥。
+          </Text>
           <TextInput
             style={styles.input}
             placeholder="secretId"

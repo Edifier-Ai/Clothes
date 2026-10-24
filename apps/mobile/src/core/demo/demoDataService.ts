@@ -46,7 +46,8 @@ export function createDemoDataService(
     async load(anchorDate = localDate()): Promise<DemoDataSummary> {
       const app = await runtime.readyDb();
       const executor: DemoSqlExecutor = {
-        transaction: (work) => app.raw.withTransactionAsync(work),
+        // 与 GarmentDb.transaction 共用串行队列，避免与其它事务在同一连接上嵌套 BEGIN。
+        transaction: (work) => app.withTransaction(work),
         run: async (sql, params) => {
           await app.raw.runAsync(sql, ...params);
         },
