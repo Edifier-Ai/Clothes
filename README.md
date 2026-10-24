@@ -22,9 +22,12 @@
 ## 安装与质量门
 
 ```sh
+# 需要代理时在本机全局配置，不要写进仓库 .npmrc：
+#   pnpm config set proxy http://127.0.0.1:7890 --location=global
+#   pnpm config set https-proxy http://127.0.0.1:7890 --location=global
 pnpm install          # 根目录，workspace 全量安装
 pnpm typecheck        # tsc --noEmit（strict）
-pnpm lint             # expo lint (eslint flat config)
+pnpm lint             # expo lint (eslint flat config)，CI 要求 0 warning
 pnpm test             # jest --ci，跳过数必须为 0
 ```
 
@@ -54,16 +57,17 @@ apps/mobile/
   src/features/        按用户闭环组织的页面与组件
   src/design-system/   方向 3 tokens（色板/字号/间距/圆角/点击目标）
   src/native/          腾讯云抠图、签名与平台文件适配（MVP-002+）
-packages/              可序列化契约与导出格式（MVP-013+）
+packages/              （规划中，尚未创建）可序列化契约与导出格式（MVP-013+）
 scripts/               环境核对与验收脚本
 ```
 
-## 当前状态（2026-08-01）
+## 当前状态
 
-- 当前任务：MVP-006 `BLOCKED`；实现与模拟器证据完成，仍缺物理 Android 的 TDY-03/04/05/08 截图和离线录屏。
-- 抠图：腾讯云 GoodsMatting 为现役唯一路径；上传前明确告知并取得同意，密钥只存 SecureStore，断网可排队/跳过/仅保存原图。
-- 本轮质量门：TypeScript 0 错误；21 suites / 164 tests / 0 skipped；ESLint 0 errors / 14 warnings。测试仍有一条 React `act(...)` 控制台 warning。
-- 设备/包：实体设备已连接但 ADB 未授权；当前副本未生成 APK，真机复验前须重新 prebuild+构建。
+进度、验收证据与阻塞项分别见 `PROGRESS.md`、`tasks/EXECUTION_STATE.md` 与 `BLOCKED.md`；README 只放稳定信息，不再记录每轮测试数字。
+
+- 抠图：腾讯云 GoodsMatting 为现役唯一路径；上传前明确告知并取得同意，密钥只存 SecureStore（建议使用只授权单个存储桶的 CAM 子账号密钥），断网可排队/跳过/仅保存原图。
+- 持久化：SQLite 为会话查询引擎，`garments_mirror.json` 镜像兜底强杀丢写（`BLOCKED.md` B-4）；多语句写入统一走 `AppDb.withTransaction` / `GarmentDb.transaction` 串行事务。
+- CI：`.github/workflows/ci.yml` 在 push/PR 时跑 typecheck、lint（0 warning）与 Jest。
 
 ## 红线
 
