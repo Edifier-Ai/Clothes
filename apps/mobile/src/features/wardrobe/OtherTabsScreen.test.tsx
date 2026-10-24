@@ -1,16 +1,22 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { render, screen } from '@testing-library/react-native';
 
+import LooksScreen from '../looks/LooksScreen';
+import PlanScreen from '../plan/PlanScreen';
+import WardrobeScreen from './WardrobeScreen';
+
 // @shopify/flash-list 以 ESM 形式发布，jest 默认不转换；空态分支不渲染它，
 // 这里用空替身避免 import 时解析 ESM 失败（仅外壳，非被测核心）。
 jest.mock('@shopify/flash-list', () => ({ FlashList: () => null }));
 
 // 外壳测试不需要真实路由/图像；mock 掉以避免 expo-router 源文件 ESM 解析与原生图像模块。
 jest.mock('expo-router', () => {
-  const React = require('react');
+  const { useEffect } = jest.requireActual<typeof import('react')>('react');
   return {
     useRouter: () => ({ push: () => undefined, back: () => undefined }),
-    useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), []),
+    // 只在挂载时触发一次（模拟首次聚焦）；依赖 cb 会因每次渲染新建回调而反复加载。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useFocusEffect: (cb: () => void) => useEffect(() => cb(), []),
     useLocalSearchParams: () => ({}),
   };
 });
@@ -40,10 +46,6 @@ jest.mock('@/features/looks/LookCover', () => ({ LookCover: () => null }));
 jest.mock('@/core/plan/planService', () => ({
   listPlansInRange: () => Promise.resolve([]),
 }));
-
-import LooksScreen from '../looks/LooksScreen';
-import PlanScreen from '../plan/PlanScreen';
-import WardrobeScreen from './WardrobeScreen';
 
 describe('其余三个主标签页骨架', () => {
   it('衣橱页显示标题与空状态主操作', () => {

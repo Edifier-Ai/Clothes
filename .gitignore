@@ -44,3 +44,5 @@ scripts/evidence/MVP-014/device-backup/clothes-images.tar
 scripts/segmentation-benchmark/.private/
 # Local evidence tooling (scrcpy/adb bundles, not project source)
 scripts/evidence/.tools/
+# Local code-index tool output
+.codebase-memory/

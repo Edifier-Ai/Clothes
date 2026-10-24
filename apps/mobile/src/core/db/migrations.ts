@@ -19,6 +19,8 @@ export interface MigrationOptions {
    * 满足「数据不丢」最高优先级。WAL 在强杀且未 checkpoint 时会丢最近写入，故不采用。
    */
   journalMode?: 'DELETE' | 'TRUNCATE' | 'WAL';
+  /** 仅测试：替换迁移列表（例如注入一条损坏的迁移验证回滚）。默认 MIGRATIONS。 */
+  migrations?: readonly MigrationSql[];
 }
 
 export interface MigrationSql {
@@ -378,7 +380,7 @@ export async function runMigrations(
   await adapter.exec(META_DDL);
 
   const from = (await adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'")) ?? 0;
-  const pending = MIGRATIONS.filter((m) => m.version > from);
+  const pending = (options.migrations ?? MIGRATIONS).filter((m) => m.version > from);
   if (pending.length === 0) return { from, to: from };
 
   for (const m of pending) {
