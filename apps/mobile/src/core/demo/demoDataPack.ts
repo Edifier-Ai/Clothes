@@ -315,9 +315,9 @@ export function buildDemoDataPack(anchorDate: string): DemoDataPack {
         id: 'top:$candidate|bottom:demo-v1-bottom-01|shoes:demo-v1-shoes-01|outerwear:demo-v1-outer-01',
         candidateSlot: 'top',
         items: [
-          { garmentId: `${DEMO_PREFIX}bottom-01`, name: '黑色直筒裤', category: 'bottom', imageRelPath: 'originals/demo-v1-bottom-01.png' },
-          { garmentId: `${DEMO_PREFIX}shoes-01`, name: '黑色皮质乐福鞋', category: 'shoes', imageRelPath: 'originals/demo-v1-shoes-01.png' },
-          { garmentId: `${DEMO_PREFIX}outer-01`, name: '驼色经典风衣', category: 'outerwear', imageRelPath: 'originals/demo-v1-outer-01.png' },
+          { garmentId: `${DEMO_PREFIX}bottom-01`, name: '黑色直筒裤', category: 'bottom', imageRelPath: 'originals/demo-v1-bottom-01.webp' },
+          { garmentId: `${DEMO_PREFIX}shoes-01`, name: '黑色皮质乐福鞋', category: 'shoes', imageRelPath: 'originals/demo-v1-shoes-01.webp' },
+          { garmentId: `${DEMO_PREFIX}outer-01`, name: '驼色经典风衣', category: 'outerwear', imageRelPath: 'originals/demo-v1-outer-01.webp' },
         ],
       },
     ],
