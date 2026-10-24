@@ -23,8 +23,8 @@ import { listByStatus, type AnyDb } from './queue';
 /**
  * 衣物 DAO：纯数据访问，事务边界明确，全异步。
  *
- * 通过显式 `GarmentDb` 抽象屏蔽后端差异：设备用 expo-sqlite 异步 API + Drizzle
- * （withTransactionAsync 保证原子落盘），测试用 better-sqlite3 同步 API 包成 Promise。
+ * 通过显式 `GarmentDb` 抽象屏蔽后端差异：设备用 expo-sqlite + Drizzle（事务走
+ * withTransactionAsync 串行队列，见 expoDb.ts），测试用 better-sqlite3 同步 API 包成 Promise。
  * 二者共享同一 schema/SQL 语义。
  */
 
@@ -208,30 +208,33 @@ export async function dumpAll(db: GarmentDb): Promise<GarmentDump> {
 
 /** 用镜像全量替换当前数据（事务内清空再插入）。用于启动时从持久镜像回灌。 */
 export async function replaceAll(db: GarmentDb, dump: GarmentDump): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.deleteAllTripTemplates();
-    await tx.deleteAllPackingItems();
-    await tx.deleteAllTripOutfits();
-    await tx.deleteAllTrips();
-    await tx.deleteAllPlans();
-    await tx.deleteAllLookItems();
-    await tx.deleteAllLooks();
-    await tx.deleteAllStatusEvents();
-    await tx.deleteAllTags();
-    await tx.deleteAllAssets();
-    await tx.deleteAllGarments();
-    for (const g of dump.garments) await tx.insertGarment(g);
-    for (const a of dump.assets) await tx.insertAsset(a);
-    if (dump.tags.length > 0) await tx.insertTags(dump.tags);
-    for (const e of dump.statusEvents ?? []) await tx.insertStatusEvent(e);
-    for (const l of dump.looks ?? []) await tx.insertLook(l);
-    if ((dump.lookItems ?? []).length > 0) await tx.insertLookItems(dump.lookItems ?? []);
-    for (const p of dump.plans ?? []) await tx.insertPlan(p);
-    for (const tr of dump.trips ?? []) await tx.insertTrip(tr);
-    for (const to of dump.tripOutfits ?? []) await tx.insertTripOutfit(to);
-    for (const pi of dump.packingItems ?? []) await tx.insertPackingItem(pi);
-    for (const tp of dump.tripTemplates ?? []) await tx.insertTripTemplate(tp);
-  });
+  await db.transaction((tx) => replaceAllInTransaction(tx, dump));
+}
+
+/** replaceAll 的事务内版本：调用方已开启事务（例如回灌时与其它表一起原子替换）。 */
+export async function replaceAllInTransaction(tx: GarmentDbOps, dump: GarmentDump): Promise<void> {
+  await tx.deleteAllTripTemplates();
+  await tx.deleteAllPackingItems();
+  await tx.deleteAllTripOutfits();
+  await tx.deleteAllTrips();
+  await tx.deleteAllPlans();
+  await tx.deleteAllLookItems();
+  await tx.deleteAllLooks();
+  await tx.deleteAllStatusEvents();
+  await tx.deleteAllTags();
+  await tx.deleteAllAssets();
+  await tx.deleteAllGarments();
+  for (const g of dump.garments) await tx.insertGarment(g);
+  for (const a of dump.assets) await tx.insertAsset(a);
+  if (dump.tags.length > 0) await tx.insertTags(dump.tags);
+  for (const e of dump.statusEvents ?? []) await tx.insertStatusEvent(e);
+  for (const l of dump.looks ?? []) await tx.insertLook(l);
+  if ((dump.lookItems ?? []).length > 0) await tx.insertLookItems(dump.lookItems ?? []);
+  for (const p of dump.plans ?? []) await tx.insertPlan(p);
+  for (const tr of dump.trips ?? []) await tx.insertTrip(tr);
+  for (const to of dump.tripOutfits ?? []) await tx.insertTripOutfit(to);
+  for (const pi of dump.packingItems ?? []) await tx.insertPackingItem(pi);
+  for (const tp of dump.tripTemplates ?? []) await tx.insertTripTemplate(tp);
 }
 
 /** 记录数据最后修改时间，供镜像新鲜度比较。 */

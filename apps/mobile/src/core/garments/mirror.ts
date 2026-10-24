@@ -1,8 +1,9 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
 
 import type { GarmentDb, GarmentDump } from '../db/dao';
-import { bumpDataVersion, dumpAll, replaceAll } from '../db/dao';
+import { bumpDataVersion, dumpAll, replaceAllInTransaction } from '../db/dao';
 import * as schema from '../db/schema';
 import {
   cutoutJobs,
@@ -295,17 +296,28 @@ async function restoreExtra(
   await drizzleDb.delete(recommendations);
   await drizzleDb.delete(maskStrokes);
   await drizzleDb.delete(cutoutJobs);
-  for (const j of m.cutoutJobs) await drizzleDb.insert(cutoutJobs).values(j);
-  for (const s of m.maskStrokes) await drizzleDb.insert(maskStrokes).values(s);
-  for (const r of m.recommendations) await drizzleDb.insert(recommendations).values(r);
-  for (const ri of m.recommendationItems) await drizzleDb.insert(recommendationItems).values(ri);
-  for (const rc of m.reasonCodes) await drizzleDb.insert(reasonCodes).values(rc);
-  for (const w of m.wearLogs) await drizzleDb.insert(wearLogs).values(w);
-  for (const wi of m.wearLogItems) await drizzleDb.insert(wearLogItems).values(wi);
-  for (const f of m.feedbackEvents) await drizzleDb.insert(feedbackEvents).values(f);
-  for (const w of m.weatherCache) await drizzleDb.insert(weatherCache).values(w);
-  for (const candidate of m.shoppingCandidates ?? []) {
-    await drizzleDb.insert(shoppingCandidates).values(candidate);
+  await insertChunked(drizzleDb, cutoutJobs, m.cutoutJobs);
+  await insertChunked(drizzleDb, maskStrokes, m.maskStrokes);
+  await insertChunked(drizzleDb, recommendations, m.recommendations);
+  await insertChunked(drizzleDb, recommendationItems, m.recommendationItems);
+  await insertChunked(drizzleDb, reasonCodes, m.reasonCodes);
+  await insertChunked(drizzleDb, wearLogs, m.wearLogs);
+  await insertChunked(drizzleDb, wearLogItems, m.wearLogItems);
+  await insertChunked(drizzleDb, feedbackEvents, m.feedbackEvents);
+  await insertChunked(drizzleDb, weatherCache, m.weatherCache);
+  await insertChunked(drizzleDb, shoppingCandidates, m.shoppingCandidates ?? []);
+}
+
+/** 多行 INSERT，按块切分以免超过 SQLite 绑定参数上限；启动回灌比逐行插入快一个数量级。 */
+const INSERT_CHUNK_ROWS = 100;
+
+async function insertChunked<T extends SQLiteTable>(
+  drizzleDb: ExpoSQLiteDatabase<typeof schema>,
+  table: T,
+  rows: readonly T['$inferInsert'][],
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK_ROWS) {
+    await drizzleDb.insert(table).values(rows.slice(i, i + INSERT_CHUNK_ROWS) as T['$inferInsert'][]);
   }
 }
 
@@ -319,39 +331,42 @@ export async function restoreFromMirrorIfNeeded(
   if (!mirror) return false;
   const dbVersion = (await db.getMetaInt('data_updated_at')) ?? 0;
   if (mirror.updatedAt > dbVersion) {
-    await replaceAll(db, mirror);
-    if (mirror.version >= 2 && drizzleDb) {
-      // v2 镜像没有 v3 字段，按空数组回灌（删表后重插空）
-      const base = mirror as MirrorFileV2;
-      const v4: MirrorFileV4 = mirror.version >= 4
-        ? // v4/v5/v6 的扩展表结构一致；v5 的 statusEvents、v6 的 looks/lookItems
-          // 都在 GarmentDump 内由 replaceAll 恢复
-          (mirror as MirrorFileV4)
-        : mirror.version === 3
-          ? {
-              ...(mirror as MirrorFileV3),
+    // 核心表与扩展表在同一个事务里替换：中途失败整体回滚，不会留下半套数据。
+    await db.transaction(async (tx) => {
+      await replaceAllInTransaction(tx, mirror);
+      if (mirror.version >= 2 && drizzleDb) {
+        // v2 镜像没有 v3 字段，按空数组回灌（删表后重插空）
+        const base = mirror as MirrorFileV2;
+        const v4: MirrorFileV4 = mirror.version >= 4
+          ? // v4/v5/v6 的扩展表结构一致；v5 的 statusEvents、v6 的 looks/lookItems
+            // 都在 GarmentDump 内由 replaceAll 恢复
+            (mirror as MirrorFileV4)
+          : mirror.version === 3
+            ? {
+                ...(mirror as MirrorFileV3),
+                version: 4,
+                feedbackEvents: [],
+                weatherCache: [],
+              }
+            : {
               version: 4,
+              updatedAt: base.updatedAt,
+              garments: base.garments,
+              assets: base.assets,
+              tags: base.tags,
+              cutoutJobs: base.cutoutJobs,
+              maskStrokes: base.maskStrokes,
+              recommendations: [],
+              recommendationItems: [],
+              reasonCodes: [],
+              wearLogs: [],
+              wearLogItems: [],
               feedbackEvents: [],
               weatherCache: [],
-            }
-          : {
-            version: 4,
-            updatedAt: base.updatedAt,
-            garments: base.garments,
-            assets: base.assets,
-            tags: base.tags,
-            cutoutJobs: base.cutoutJobs,
-            maskStrokes: base.maskStrokes,
-            recommendations: [],
-            recommendationItems: [],
-            reasonCodes: [],
-            wearLogs: [],
-            wearLogItems: [],
-            feedbackEvents: [],
-            weatherCache: [],
-          };
-      await restoreExtra(drizzleDb, v4);
-    }
+            };
+        await restoreExtra(drizzleDb, v4);
+      }
+    });
     await bumpDataVersion(db, mirror.updatedAt);
     return true;
   }
