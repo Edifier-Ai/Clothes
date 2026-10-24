@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlashList } from '@shopify/flash-list';
@@ -18,6 +19,7 @@ import { isFilterActive } from '@/core/wardrobe/search';
 import type { GarmentCategory, GarmentStatus, TagKind } from '@/core/db/schema';
 import { EmptyStateCard } from '@/features/shell/EmptyStateCard';
 import { TabShell } from '@/features/shell/TabShell';
+import { GarmentArtwork } from '@/features/shared/GarmentArtwork';
 
 const CATEGORY_LABEL: Record<string, string> = {
   top: '上装',
@@ -155,6 +157,19 @@ export default function WardrobeScreen() {
         </View>
       }
     >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="打开购物守门"
+        onPress={() => router.push('/shopping')}
+        style={styles.shoppingEntry}
+      >
+        <View style={styles.shoppingEntryText}>
+          <Text style={styles.shoppingEyebrow}>买前检查</Text>
+          <Text style={styles.shoppingTitle}>衣橱里已有相似款吗？</Text>
+          <Text style={styles.shoppingHint}>用真实衣物查重、试搭并估算成本/次</Text>
+        </View>
+        <Ionicons name="arrow-forward-outline" size={20} color={palette.charcoal} />
+      </Pressable>
       <View style={styles.searchRow}>
         <TextInput
           value={filter.text ?? ''}
@@ -290,7 +305,12 @@ export default function WardrobeScreen() {
                 {entry.imageRelPath ? (
                   <Image source={{ uri: originalUri(entry.imageRelPath) }} style={styles.thumb} contentFit="contain" />
                 ) : (
-                  <View style={styles.thumb} />
+                  <View style={styles.thumb}>
+                    <GarmentArtwork
+                      category={g.category}
+                      color={entry.item.tags.find((tag) => tag.kind === 'color')?.value}
+                    />
+                  </View>
                 )}
                 {selecting ? (
                   <View style={[styles.check, checked && styles.checkOn]}>
@@ -376,6 +396,22 @@ export default function WardrobeScreen() {
 }
 
 const styles = StyleSheet.create({
+  shoppingEntry: {
+    minHeight: 84,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.hairline,
+  },
+  shoppingEntryText: { flex: 1, paddingRight: spacing.sm },
+  shoppingEyebrow: { ...typography.caption, color: palette.mutedGold, letterSpacing: 1 },
+  shoppingTitle: { ...typography.body, color: palette.charcoal, marginTop: 2 },
+  shoppingHint: { ...typography.caption, color: palette.charcoalSoft, marginTop: 2 },
   trailingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   insightBtn: {
     minHeight: hitTarget.min,

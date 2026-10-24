@@ -25,28 +25,42 @@ export interface DecodedPng {
 /** PNG 字节 → 非预乘 RGBA。失败（不支持的格式/损坏数据/readPixels 失败）抛错。 */
 export function decodePng(bytes: Uint8Array): DecodedPng {
   const { Skia, ColorType, AlphaType } = skia();
-  const img = Skia.Image.MakeImageFromEncoded(Skia.Data.fromBytes(bytes));
-  if (!img) throw new Error('PNG decode failed: unsupported or corrupt image');
-  const w = img.width();
-  const h = img.height();
-  const pixels = img.readPixels(0, 0, {
-    width: w,
-    height: h,
-    colorType: ColorType.RGBA_8888,
-    alphaType: AlphaType.Unpremul,
-  });
-  if (!pixels) throw new Error('PNG decode failed: readPixels returned null');
-  const rgba = pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels.buffer);
-  return { rgba, w, h };
+  const data = Skia.Data.fromBytes(bytes);
+  let img: SkImageT | null = null;
+  try {
+    img = Skia.Image.MakeImageFromEncoded(data);
+    if (!img) throw new Error('PNG decode failed: unsupported or corrupt image');
+    const w = img.width();
+    const h = img.height();
+    const pixels = img.readPixels(0, 0, {
+      width: w,
+      height: h,
+      colorType: ColorType.RGBA_8888,
+      alphaType: AlphaType.Unpremul,
+    });
+    if (!pixels) throw new Error('PNG decode failed: readPixels returned null');
+    // 复制到 JS 自有内存后再释放 JSI image/data，避免返回悬空的原生 buffer。
+    const rgba = Uint8Array.from(pixels);
+    return { rgba, w, h };
+  } finally {
+    img?.dispose();
+    data.dispose();
+  }
 }
 
 /** PNG 字节 → SkImage（画布展示原图用）。Skia v2 useImage 对 file:// 真机不可靠
  * （2026-08-01 真机实测原图空白），改走 JSI 解码。失败抛错。 */
 export function decodeSkImage(bytes: Uint8Array): SkImageT {
   const { Skia } = skia();
-  const img = Skia.Image.MakeImageFromEncoded(Skia.Data.fromBytes(bytes));
-  if (!img) throw new Error('PNG decode failed: unsupported or corrupt image');
-  return img;
+  const data = Skia.Data.fromBytes(bytes);
+  try {
+    const img = Skia.Image.MakeImageFromEncoded(data);
+    if (!img) throw new Error('PNG decode failed: unsupported or corrupt image');
+    // 返回的 SkImage 所有权交给调用方；这里只释放临时 encoded SkData handle。
+    return img;
+  } finally {
+    data.dispose();
+  }
 }
 
 /** 非预乘 RGBA → PNG 字节。长度不符或建图失败抛错，绝不静默产出坏图。 */
@@ -55,13 +69,20 @@ export function encodePng(rgba: Uint8Array, w: number, h: number): Uint8Array {
     throw new Error(`PNG encode failed: rgba length ${rgba.length} != w*h*4 (${w * h * 4})`);
   }
   const { Skia, ColorType, AlphaType, ImageFormat } = skia();
-  const img = Skia.Image.MakeImage(
-    { width: w, height: h, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul },
-    Skia.Data.fromBytes(rgba),
-    w * 4,
-  );
-  if (!img) throw new Error('PNG encode failed: MakeImage returned null');
-  return img.encodeToBytes(ImageFormat.PNG);
+  const data = Skia.Data.fromBytes(rgba);
+  let img: SkImageT | null = null;
+  try {
+    img = Skia.Image.MakeImage(
+      { width: w, height: h, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul },
+      data,
+      w * 4,
+    );
+    if (!img) throw new Error('PNG encode failed: MakeImage returned null');
+    return Uint8Array.from(img.encodeToBytes(ImageFormat.PNG));
+  } finally {
+    img?.dispose();
+    data.dispose();
+  }
 }
 
 /** 单通道 alpha → 灰度 PNG（R=G=B=alpha，A=255；与原 pngjs encodeAlphaPng 语义一致）。 */

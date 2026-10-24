@@ -1,9 +1,59 @@
 # PROGRESS
 
-状态：P0 全部完成（MVP-014 ACCEPTED：Android P0 发布卡，Release APK v0.1.0 签名构建 + 真机闭环 + 飞行模式断网 + 升级迁移 + 反向验证 + 模拟器矩阵）
-当前任务：无 P0 待办（P1 队列待激活：MVP-012/013/P1-001/P1-002）
-最后更新：2026-08-02
+状态：Demo 收口 DEMO-001 READY_FOR_RECORDING（MVP-013 已按用户范围决策 SUPERSEDED）
+当前任务：可录屏完整产品体验——代码、Release、模拟器闭环与录屏脚本均已就绪
+最后更新：2026-08-28
 P0 代码入库：commit 1a574a1（feat(P0): finalize calendar/trips/insights and signed Android release，213 files +9668/-61，敏感文件 .gitignore 覆盖，release-keystore-setup.txt 明文密码脱敏为 <STOREPASS>，未推送远端）
+
+## 2026-08-27 DEMO-001 激活与范围冻结
+
+- 用户目标：交付一份可安装、可流畅录屏、看起来功能完整且能呈现核心卖点的 Android Demo；核心交互和本地持久化真实，非核心信息允许确定性演示数据。
+- 明确退出：天气、定位/天气权限、备份、导出、恢复、账号、云同步、Pro、iOS；MVP-013 因范围变化标记 SUPERSEDED。
+- 明确保留：今日推荐、衣橱、造型、计划/日历、深度洞察、购物守门；设置允许多选推荐参考要素且必须真实影响结果与理由。
+- 新建唯一激活卡 `tasks/backlog/DEMO-001-recordable-product.md`，执行顺序为范围删减 → 推荐设置 → DemoDataPack → 录屏主线打磨 → 全量验证。
+- 规划门禁：`scripts/validate-planning.ps1` exit 0；RequiredSectionsComplete=True，59/59 UI 规格页仍有任务覆盖，Errors=0。
+- 任务 1 首个 GREEN：今日页已移除 WeatherBar/WeatherPanel、定位请求和天气控制器；删除 `core/weather`、`todayWeather.ts`、未完成 backup 测试/服务，并移除 expo-location/document-picker/sharing/fflate 依赖与 location 插件。历史 schema/migration 暂留只为旧数据兼容。定向 typecheck exit 0；Today+preferences 2 suites / 23 tests passed；改动文件 scoped lint exit 0。
+- 任务 2 RED：先增加推荐参考要素的持久化与规则影响测试；定向 3 suites 共 36 tests，11 failed（久未穿、近期重复、配色、场合、反馈、主角及完整偏好快照均按预期红灯），证明现有实现尚未读取这些设置。
+- 任务 2 核心 GREEN：新增版本容错的 6 要素偏好（场合/配色/盘活/防重复/反馈/主角），旧安装缺字段默认维持原行为；推荐与换一套引擎分别真实控制排序、理由、近期重复、反馈权重与主角锁定，硬约束不受开关影响。typecheck exit 0；同一 3 suites / 36 tests 全绿。
+- 任务 2 UI GREEN：今日页新增 48×48 齿轮入口；设置首页与“推荐参考要素”页真实可达，六开关整组保存并通过偏好订阅供今日页下一次生成使用；主角关闭时不再展示主角模式。新增 UI 测试覆盖六开关、保存载荷、设置路由和齿轮路由。
+- 阶段全量门禁：`pnpm typecheck` exit 0；`pnpm test` 79 suites / 579 passed / 0 failed（测试总数高于本轮已知基线 576）；`pnpm lint` 0 errors / 10 historical warnings；`git diff --check` exit 0。首次全量测试只因旧断言要求展示“导出尚未完成”而 1 red，按用户移除导出的范围改为“仅存当前设备且无导出/备份/恢复文案”后全绿。
+- 任务 3 数据核心 GREEN：新增固定版本 `DemoDataPack`，按当天生成 12 件衣物、3 套造型、3 条计划、8 天穿着和 1 个购物判断案例；只清理 `demo-v1-*` 命名空间，重复执行幂等，注入第 10 次写入失败时整包回滚且保留用户衣物。核心测试 3/3、typecheck exit 0。
+- 任务 3 设备入口 GREEN：设置新增“演示数据”路径，可一键真实写库并落本地镜像；明确展示只重置演示命名空间，具备加载、成功、失败、重试与“开始体验”状态。设置相关定向 3 suites / 8 tests passed，typecheck exit 0。
+- 当前证据边界：此前 Release APK 构建成功；本轮尚未取得 Android 运行态证据，设备/AVD 阻塞仍需单独处理，不能用构建结果替代录屏验收。
+
+## 2026-08-28 DEMO-001 录屏版就绪
+
+- 任务 3 完整 GREEN：演示包现为 12 件衣物、3 套造型、3 条计划、8 天穿着和 1 个购物案例；重复载入幂等，注入第 10 次写失败整包回滚；用户衣物以及用户穿着记录不会被 demo 重载误删。洞察由穿着事实实时计算，无硬编码 KPI。
+- 任务 4 视觉收口：无图衣物使用确定性类别/颜色剪影；三套造型写入独立 x/y/scale，不再四件重叠；外套 COAT 标识不裁切。今日、衣橱、造型、计划、设置、洞察和购物报告均已取得模拟器截图。
+- 设置真实交互：六个推荐参考要素可独立切换；关闭主角单品保存后显示 5/6，force-stop 冷启动仍为 5/6；最终交付起点恢复 6/6。
+- 数据真实联动：8 天演示洞察 → 今日完成一条穿着记录 → force-stop 冷启动 → 洞察显示 9 天；重新载入 demo 保留该用户记录，证明只清理 demo 命名空间。最终只清空测试模拟器数据并重新载入，恢复 8 天干净起点。
+- 购物守门闭环：内置候选进入同类证据页，无商品图时明确“不猜相似度”；可搭报告基于当前衣橱实时显示 18 套合法组合。
+- 响应矩阵：360×800、390×844、430×932 与 390×844 / 1.3×字体运行态均通过；最终恢复 390×844 / 1.0×、Asia/Shanghai，冷启动停在今日页。
+- Android 运行态：修复 Android 36 AVD system image 后，Release APK 安装成功；冷启动 1166ms（最终复跑 529ms 量级），logcat 未发现 FATAL EXCEPTION / SQLiteException / ReactNativeJS Error。
+- Release：`assembleRelease` BUILD SUCCESSFUL；APK 163,702,950 bytes，SHA256 `21EFC30585B1C25AAD3C2BEF2CD90AC2F1B2CCA4E9BB97B32728F9D31B0266BB`，包名 `com.clothes.app`，versionName 0.1.0，targetSdk 36。
+- 最终全量门禁：Jest 81 suites / 586 tests / 0 failed；typecheck exit 0；lint 0 errors / 10 historical warnings；`git diff --check` exit 0；规划门禁 59/59、Errors=0。
+- 录屏交付：`scripts/evidence/DEMO-001/RECORDING_SCRIPT.md` 提供 5–7 分钟讲解路径；`demo-smoke.mp4` 为 390×844 H.264、28.204 秒无旁白连续运行证据；完整索引见 `scripts/evidence/DEMO-001/INDEX.md`。
+- 证据边界：当前只完成 Android 模拟器运行态，不声称物理 Android 设备已验证；无旁白冒烟视频不等于最终营销成片。
+
+## 2026-08-17 MVP-012 激活与全量差距审计
+
+- 已按 `AGENT_GOAL.md`、`tasks/EXECUTION_STATE.md`、`PROGRESS.md`、P1 任务卡、59 页规格和 29 张独立效果图完成只读盘点；当前唯一激活卡为 `MVP-012`。
+- 当前基线：`pnpm typecheck` exit 0；`pnpm test` 65 suites / 492 tests / 0 failed；`pnpm lint` 0 errors / 13 warnings。此证据只代表本地静态/自动化门，不等于 Android 真机验收。
+- 已确认 MVP-012 尚无购物路由、表、服务或特征算法；MVP-013 尚无设置、隐私开关、导出恢复与本地删除；P1-001/P1-002 分别受云资源授权与 Mac/Xcode/签名/真 iPhone 外部条件约束。
+- 复验同时发现首启重定向、导入暂存残留、洞察跳转参数、镜像非原子写、EXIF 哈希与配色推荐等回归风险；先以测试固定再修复，不覆盖用户与既有 agent 的无关改动。
+- 视觉裁决：纸白背景、炭黑主操作、酒红选择/强调、哑金大数字、发丝分隔、真实衣物大图；后续页面禁止用 UUID 充当展示名，也不把历史效果图冒充本轮运行态截图。
+- P0 回归小步已 RED→GREEN：RootLayout 订阅 onboarding 状态；“稍后补录”先持久完成态；引导改为如实说明明确同意后上传腾讯云且导出尚未完成；单件添加复用首次 staged，重选/卸载会 abort。定向 4 suites / 23 tests、typecheck、定向 ESLint、diff check 均通过。
+- 修复 STA-02 “为它搭一套”路由参数由错误的 `garmentId` 改为 `hero`，接收端仍兼容旧深链参数。
+
+## 2026-08-17 MVP-012 本地实现完成，MVP-013 激活
+
+- 新增 schema / migration / mirror v9 与独立 `shopping_candidates` 墓碑候选；候选不与衣橱外键级联，图片及商品 URL 均做路径/协议边界校验。
+- 图片证据使用类别门禁、dHash、Lab v2 软分箱和轮廓四维贡献；近色扰动连续、同色异类不会进入高相似，算法版本随实现升级。
+- 组合计算改为流式精确计数并只保留稳定前三套，300 件用例不再物化笛卡尔积；读取报告会按当前 active / isAvailable / 图片安全性重校验旧快照。
+- SHP-01..03 已接入候选创建/重试、四维解释、真实衣橱导航、成本/次假设、三种判断、独立删除与安全外链；pending 中断可恢复且不会显示伪 0 套结论。
+- 数据耐久错误与图片分析错误已区分；镜像写入采用串行 tmp/bak 原子换名并可从备份回退；Skia 临时资源在 `try/finally` 释放。
+- 本轮全量门禁：Jest 78 suites / 569 tests / 0 failed；mobile TypeScript 通过；shopping scoped ESLint 0 error / 0 warning；`git diff --check` 通过。
+- 当前 `adb devices -l` 无连接设备，SHP-01..03 真机截图与 360/390/430、1.3×字体运行态复验未取得，因此 MVP-012 不标 ACCEPTED，只作为设备证据 BLOCKED；按“外部阻塞不影响下一卡”激活 MVP-013。
 
 ## 开工回执（MVP-000/001）
 
@@ -515,3 +565,42 @@ MVP-010，故**不标 IN_PROGRESS**，只做不返工的领域层纯函数 + 测
 证据：`scripts/evidence/MVP-014/INDEX.md`（真机截图 30+ 张 + 模拟器矩阵 6 张 + aapt 元数据 + 反向验证测试 + 性能数据）
 
 **P0 全部完成。下一阶段：P1 队列（MVP-012 购物守门 / MVP-013 隐私导出恢复 / P1-001 托管同步 / P1-002 iOS 发布）。**
+
+## 2026-08-28 DEMO-001 再补 30 张素材并随 APK 打包
+
+在原 24 张冷启动单品图基础上新增 30 张透明背景电商单品图（8 上装、6 下装、5 连衣裙、4 外套、4 鞋履、3 配饰），`apps/mobile/assets/demo-garments/` 现共 54 张；全部由 imagegen 生成并经目视检查，PNG 四角透明度检查无不透明底色。
+
+实现与数据：
+- `demoGarmentCatalog.ts` 新增 `top-07..14`、`bottom-06..11`、`dress-04..08`、`outer-05..08`、`shoes-05..08`、`accessory-03..05`，每项固定 require、SHA-256、字节数和业务标签。
+- DemoDataPack 升至 v3：54 件衣物、54 条图片资产、18 套造型、7 条计划、20 天穿着记录、1 个购物案例；原有 `demo-v1-` 幂等替换与不覆盖用户原图边界不变。
+- 设置演示页同步展示 54/18/7/20，新增素材会参与今日推荐、衣橱、计划和洞察，而不是只作为 APK 中未使用的静态文件。
+
+验证：
+- typecheck exit 0；lint 0 errors / 10 historical warnings；git diff --check exit 0。
+- 全量 Jest：82 suites / 587 passed / 0 failed；定向 Demo 测试 3 suites / 7 passed。
+- `assembleRelease` BUILD SUCCESSFUL（628 tasks）；Metro Copying 102 asset files；构建中间资源与源图 SHA-256 精确匹配 54/54，最终 APK 的 aapt2 资源表 `assets_demogarments_*` 为 54/54。
+- 模拟器 `emulator-5554`：release 升级安装成功；冷启动演示页显示 54/18/7/20；一键载入成功；今日推荐实际选出新增的黑色针织上衣、藏蓝短裤、切尔西靴、米色羽绒服并显示图片；衣橱显示“54 件衣物”且新增图片正常渲染。证据为 `scripts/evidence/DEMO-001/physical-device/emulator-54-demo-entry.png`、`emulator-54-demo-loaded.png`、`emulator-wardrobe-54-items.png`。
+- 交付包 `scripts/evidence/DEMO-001/physical-device/clothes-demo-54-items.apk`：236,898,218 bytes，SHA-256 `B4866B6CF36A4AFF7125DA0C6A73A86446D71BC0C030579DCEDAA84E2361D930`；APK v2/v3 签名验证通过；debug 证书 SHA-256 `fac61745...1033b9c` 与上一版用户已安装包一致，可直接覆盖升级。
+
+证据边界：本轮只有 Android 模拟器连接，不能声称 54 件新包已在物理手机安装或交互通过；物理设备验收留给用户覆盖安装后完成。
+
+## 2026-08-28 DEMO-001 冷启动图片衣橱与一键导入
+
+用户要求为已安装 App 准备 20–30 件可录屏图片素材，并解决直接导入。最终产出 24 件透明背景电商单品图（6 上装、5 下装、3 连衣裙、4 外套、4 鞋、2 配饰），全部保存在 `apps/mobile/assets/demo-garments/`，共 32,864,351 bytes。
+
+实现：
+- `demoGarmentCatalog.ts` 显式登记 24 个 Metro 静态资源及固定 ID、分类、颜色、材质、季节、场合、正式度、价格、SHA-256、尺寸和字节数。
+- `demoAssetInstaller.ts` 通过 `expo-asset` 解析 APK 内置图片，首次载入复制到 App 私有 `clothes/originals/`；目标已存在则跳过，绝不覆盖原图。
+- DemoDataPack 扩为 v2：24 件衣物 + 24 条 garment_assets + 12 套造型 + 5 条计划 + 14 天穿着记录 + 1 个购物案例；重复载入仍只清理 `demo-v1-` 关系数据，不触碰用户记录。
+- onboarding“直接体验完整 Demo”和“设置 → 演示数据”复用同一导入服务；设置页展示 24/12/5/14 的真实摘要。
+- 清理旧天气原生残留：Release APK 不再申请粗略/精确位置、录音、悬浮窗权限；`allowBackup=false`、`fullBackupContent=false`。
+
+验证：
+- typecheck exit 0；lint 0 errors / 10 warnings（均为既有警告）。
+- 全量 Jest：82 suites / 587 passed / 0 failed；新增素材安装“只复制缺失文件、已有原图不覆盖”测试及 DemoDataPack 24 个 asset 行/幂等/洞察验证。
+- `assembleRelease` BUILD SUCCESSFUL；Metro 明确复制 72 assets，生成目录核对 `assets_demogarments_*` 恰好 24 个。
+- APK 签名验证 v2/v3 成功；aapt 核对位置/录音/悬浮窗权限不存在，Android backup flags 均为 false。
+- Android 模拟器 390×844：原 release 签名升级安装保留数据，冷启动进入演示页，一键载入成功显示“已准备完成”；衣橱显示 24 件且透明底单品图真实渲染。证据：`scripts/evidence/DEMO-001/demo-assets-before-import.png`、`demo-assets-after-import.png`、`demo-assets-wardrobe.png`。
+- 真机兼容更新包：`scripts/evidence/DEMO-001/physical-device/clothes-demo-with-cold-start-data.apk`，195,555,609 bytes，debug 证书 SHA-256 `fac61745...1033b9c` 与用户此前安装的 device-test 包一致；文件 SHA-256 `2C2F5AC56254C8C936D04474FF032754A4EE6F3D127F3FE4292ED3A4AA96F032`。
+
+证据边界：本轮实体手机未连接，不能声称新包已在物理设备安装或交互通过；已完成 host、Release 构建、APK 静态检查和 Android 模拟器运行验证。

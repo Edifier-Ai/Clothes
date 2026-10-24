@@ -53,25 +53,24 @@ function lookInput(id: string, now = 1_000) {
   };
 }
 
-describe('schema v8 迁移', () => {
-  it('新库版本号为 8，重复运行幂等', async () => {
+describe('schema 最新迁移', () => {
+  it('新库版本号等于 SCHEMA_VERSION，重复运行幂等', async () => {
     const t = await openTestDb();
-    expect(SCHEMA_VERSION).toBe(8);
-    expect(await t.adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'")).toBe(8);
+    expect(await t.adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'")).toBe(SCHEMA_VERSION);
     const res = await runMigrations(t.adapter, {});
-    expect(res.from).toBe(8);
-    expect(res.to).toBe(8);
+    expect(res.from).toBe(SCHEMA_VERSION);
+    expect(res.to).toBe(SCHEMA_VERSION);
     t.close();
   });
 
-  it('v5 → v8 升级：既有衣物数据保留，新增 looks/look_items 与 plans 表可用', async () => {
+  it('v5 → 最新版本升级：既有衣物数据保留，新增表可用', async () => {
     const t = await openTestDbAtVersion(5);
     await createGarment(t.db, garment('g1'));
     expect(await t.adapter.scalarInt("SELECT value FROM __clothes_meta WHERE key='schema_version'")).toBe(5);
 
     const res = await runMigrations(t.adapter, {});
     expect(res.from).toBe(5);
-    expect(res.to).toBe(8);
+    expect(res.to).toBe(SCHEMA_VERSION);
 
     // 既有数据保留
     expect((await t.db.getGarment('g1'))?.name).toBe('衣物g1');

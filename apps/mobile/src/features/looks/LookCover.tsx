@@ -1,9 +1,9 @@
 import { Image } from 'expo-image';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { palette, radius } from '@/design-system';
+import { palette, radius, typography } from '@/design-system';
 import { originalUri } from '@/core/files/uri';
 import { fitCanvasBox } from '@/core/looks/geometry';
 import type { CoverSpec } from '@/core/looks/cover';
@@ -69,7 +69,10 @@ export function LookCover({ lookId, coverRelPath, width, height }: LookCoverProp
           <LookComposite items={spec.items} width={fit.w} height={fit.h} />
         </View>
       ) : (
-        <View style={[styles.blank, { width, height }]} />
+        <View style={[styles.blank, { width, height }]}>
+          <View style={styles.blankRule} />
+          <Text style={styles.blankMark}>LOOK</Text>
+        </View>
       )}
     </View>
   );
@@ -78,5 +81,7 @@ export function LookCover({ lookId, coverRelPath, width, height }: LookCoverProp
 const styles = StyleSheet.create({
   image: { borderRadius: radius.md, backgroundColor: palette.sandSoft },
   fallback: { borderRadius: radius.md, overflow: 'hidden', backgroundColor: palette.paperWhite },
-  blank: { backgroundColor: palette.sandSoft },
+  blank: { backgroundColor: palette.sandSoft, alignItems: 'center', justifyContent: 'center' },
+  blankRule: { width: '34%', height: StyleSheet.hairlineWidth, backgroundColor: palette.mutedGold },
+  blankMark: { ...typography.caption, color: palette.charcoalSoft, letterSpacing: 2, marginTop: 8 },
 });

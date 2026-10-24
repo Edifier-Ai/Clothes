@@ -1,22 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { useCallback, useEffect, useState, type PropsWithChildren } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { palette, radius, spacing, typography, hitTarget } from '@/design-system';
 import { EmptyStateCard } from '@/features/shell/EmptyStateCard';
 import { TabShell } from '@/features/shell/TabShell';
+import { GarmentArtwork } from '@/features/shared/GarmentArtwork';
 import { openAppDb } from '@/core/db/expoDb';
-import { listActiveGarments } from '@/core/db/dao';
+import {
+  listActiveGarmentsWithThumbs,
+  type WardrobeListItem,
+} from '@/core/db/dao';
+import { originalUri } from '@/core/files/uri';
 import { writeMirror } from '@/core/garments/mirror';
 import { applyPostWear, getGarmentDetail, type PostWearAction } from '@/core/garments/service';
 import {
   generateRecommendation,
+  DEFAULT_RECOMMENDATION_FACTORS,
   REASON_LABEL,
   topReasons,
   type GarmentForRec,
   type Outfit,
   type RecResult,
+  type RecommendationFactors,
 } from '@/core/recommend';
+import { getAppPreferences, subscribeAppPreferences } from '@/core/preferences';
 import { getWearStats, recordWear } from '@/core/recommend/wearLog';
 import {
   buildFeedbackWeights,
@@ -32,33 +44,76 @@ import {
   type OutfitSlot as RecommendationSlot,
   type RecommendationMode,
 } from '@/core/recommend/replacement';
-import type { WeatherResolution } from '@/core/weather';
-import type { GarmentRow } from '@/core/db/schema';
-import {
-  DEFAULT_CITIES,
-  defaultWeatherController,
-  type WeatherController,
-} from './todayWeather';
+import type { GarmentTagRow } from '@/core/db/schema';
 
-/** 今日页加载器：返回推荐输入（衣物 + wear stats 聚合）。失败返回空数组（→ 空状态）。 */
-export async function loadTodayItems(): Promise<GarmentForRec[]> {
-  try {
+const CATEGORY_LABEL: Record<string, string> = {
+  top: '上装',
+  bottom: '下装',
+  dress: '连衣裙',
+  shoes: '鞋',
+  outerwear: '外套',
+  accessory: '配饰',
+  other: '衣物',
+};
+
+/** Today 专用展示字段；推荐核心仍只依赖 GarmentForRec，不污染规则层类型。 */
+export type TodayGarment = GarmentForRec & {
+  displayName: string;
+  imageRelPath: string | null;
+};
+
+interface TodayWearStat {
+  lastWornAt: number | null;
+  timesWorn: number;
+}
+
+/** 可注入的数据源让装配逻辑在不触碰设备 SQLite 的情况下被完整验证。 */
+export interface TodayItemLoadSource {
+  listGarmentsWithImages: () => Promise<WardrobeListItem[]>;
+  loadWearStats: () => Promise<ReadonlyMap<string, TodayWearStat>>;
+  loadTags: () => Promise<Pick<GarmentTagRow, 'garmentId' | 'kind' | 'value'>[]>;
+}
+
+/**
+ * 今日页加载器：真实衣物名 + 最佳展示图（抠图缩略图/预览优先，原图兜底）
+ * + wear stats + 颜色标签。读取失败向上抛出，由页面展示可重试错误态，绝不冒充空衣橱。
+ */
+export async function loadTodayItems(source?: TodayItemLoadSource): Promise<TodayGarment[]> {
+  let resolved = source;
+  if (!resolved) {
     const app = await openAppDb();
-    const rows = await listActiveGarments(app.db);
-    const stats = await getWearStats(app.drizzleDb);
-    return rows.map((r: GarmentRow) => ({
-      id: r.id,
-      category: r.category as GarmentForRec['category'],
-      status: r.status as GarmentForRec['status'],
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-      lastWornAt: stats.get(r.id)?.lastWornAt ?? null,
-      timesWorn: stats.get(r.id)?.timesWorn ?? 0,
-      archivedAt: r.archivedAt,
-    }));
-  } catch {
-    return [];
+    resolved = {
+      listGarmentsWithImages: () => listActiveGarmentsWithThumbs(app.db, app.drizzleDb),
+      loadWearStats: () => getWearStats(app.drizzleDb),
+      loadTags: () => app.db.getAllTags(),
+    };
   }
+
+  const [entries, stats, allTags] = await Promise.all([
+    resolved.listGarmentsWithImages(),
+    resolved.loadWearStats(),
+    resolved.loadTags(),
+  ]);
+  const colorByGarment = new Map<string, string>();
+  for (const tag of allTags) {
+    if (tag.kind === 'color' && !colorByGarment.has(tag.garmentId)) {
+      colorByGarment.set(tag.garmentId, tag.value);
+    }
+  }
+
+  return entries.map(({ garment, imageRelPath }) => ({
+    id: garment.id,
+    category: garment.category as GarmentForRec['category'],
+    status: garment.status as GarmentForRec['status'],
+    createdAt: garment.createdAt,
+    updatedAt: garment.updatedAt,
+    lastWornAt: stats.get(garment.id)?.lastWornAt ?? null,
+    timesWorn: stats.get(garment.id)?.timesWorn ?? 0,
+    archivedAt: garment.archivedAt,
+    color: colorByGarment.get(garment.id) ?? null,
+    displayName: garment.name.trim() || CATEGORY_LABEL[garment.category] || '未命名衣物',
+    imageRelPath,
+  }));
 }
 
 interface TodayScreenProps {
@@ -68,10 +123,10 @@ interface TodayScreenProps {
   onSubmit?: (input: SubmitInput) => Promise<{ inserted: boolean }>;
   /** 推荐反馈可注入实现；默认写 feedback_events + 镜像。 */
   onFeedback?: (input: FeedbackInput) => Promise<{ inserted: boolean }>;
-  /** 天气适配可注入，测试不触碰网络/定位。 */
-  weatherController?: WeatherController;
   /** 反馈软权重加载器。 */
   loadFeedbackWeights?: () => Promise<Map<string, number>>;
+  /** 推荐参考要素加载器；默认读取本机设置。 */
+  loadRecommendationFactors?: () => Promise<RecommendationFactors>;
   /** 默认场景（首次加载即用）；用户可改。 */
   defaultOccasion?: 'commute' | 'casual' | 'formal' | 'travel' | 'sport';
   now?: number;
@@ -88,6 +143,7 @@ export interface SubmitInput {
 
 type ViewState =
   | { kind: 'loading' }
+  | { kind: 'error'; message: string }
   | { kind: 'empty' }
   | { kind: 'ready'; result: RecResult; outfit: Outfit | null }
   | { kind: 'recording'; result: RecResult; outfit: Outfit; occasion: string; comfort: 'good' | 'ok' | 'bad' }
@@ -97,8 +153,34 @@ type PanelState =
   | { kind: 'none' }
   | { kind: 'replace'; slot: RecommendationSlot; candidates: GarmentForRec[] }
   | { kind: 'regenerate'; preview: Outfit | null; skipReason: string; lockHero: boolean }
-  | { kind: 'mode'; selected: RecommendationMode }
-  | { kind: 'weather'; persistCity: boolean; busy: boolean; message: string | null };
+  | { kind: 'mode'; selected: RecommendationMode };
+
+function garmentDisplayName(garment: GarmentForRec): string {
+  const displayName = (garment as Partial<TodayGarment>).displayName;
+  return typeof displayName === 'string' && displayName.trim()
+    ? displayName.trim()
+    : CATEGORY_LABEL[garment.category] ?? '衣物';
+}
+
+function garmentImageRelPath(garment: GarmentForRec): string | null {
+  const relPath = (garment as Partial<TodayGarment>).imageRelPath;
+  return typeof relPath === 'string' && relPath.trim() ? relPath.trim() : null;
+}
+
+/** 只接受 App 私有目录相对路径，拒绝协议、绝对路径、回退段和控制字符。 */
+export function safeTodayImageUri(relPath: string | null): string | null {
+  if (
+    !relPath ||
+    relPath.length > 1024 ||
+    /^[a-z][a-z0-9+.-]*:/i.test(relPath) ||
+    /^[\\/]/.test(relPath) ||
+    /(^|[\\/])\.\.([\\/]|$)/.test(relPath) ||
+    /[\u0000-\u001f\u007f]/.test(relPath)
+  ) {
+    return null;
+  }
+  return originalUri(relPath.replace(/\\/g, '/'));
+}
 
 /** TDY-07 穿后洗护面板（内存态）：记录穿着成功后逐件选择洗护动作。 */
 interface PostWearEntry {
@@ -114,11 +196,20 @@ interface PostWearPanelState {
   error: string | null;
 }
 
-const NO_WEATHER: WeatherResolution = { status: 'none', weather: null };
-
 async function loadStoredFeedbackWeights(): Promise<Map<string, number>> {
   const app = await openAppDb();
   return buildFeedbackWeights(await listFeedback(app.drizzleDb));
+}
+
+async function loadStoredRecommendationFactors(): Promise<RecommendationFactors> {
+  return (await getAppPreferences()).recommendationFactors;
+}
+
+function recentItemIds(items: readonly GarmentForRec[], now: number): string[] {
+  const recentBoundary = now - 7 * 86_400_000;
+  return items
+    .filter((item) => item.lastWornAt != null && item.lastWornAt >= recentBoundary)
+    .map((item) => item.id);
 }
 
 async function saveFeedback(input: FeedbackInput): Promise<{ inserted: boolean }> {
@@ -154,52 +245,54 @@ function ymd(now: number): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** 今日页（MVP-005/006）：推荐、换一件、换一套、模式、天气降级与反馈。 */
+/** 今日页（MVP-005/006/DEMO-001）：推荐、换一件、换一套、模式与反馈。 */
 export default function TodayScreen({
   loadItems = loadTodayItems,
   onSubmit,
   onFeedback,
-  weatherController = defaultWeatherController,
   loadFeedbackWeights = loadStoredFeedbackWeights,
+  loadRecommendationFactors = loadStoredRecommendationFactors,
   defaultOccasion = 'commute',
   now,
 }: TodayScreenProps) {
+  const router = useRouter();
   const [nowVal] = useState(() => now ?? Date.now());
   const [state, setState] = useState<ViewState>({ kind: 'loading' });
   const [occasion, setOccasion] = useState<string>(defaultOccasion);
   const [items, setItems] = useState<GarmentForRec[]>([]);
   const [mode, setMode] = useState<RecommendationMode>('safe');
   const [panel, setPanel] = useState<PanelState>({ kind: 'none' });
-  const [weather, setWeather] = useState<WeatherResolution>(NO_WEATHER);
   const [feedbackWeights, setFeedbackWeights] = useState<Map<string, number>>(new Map());
+  const [factors, setFactors] = useState<RecommendationFactors>({
+    ...DEFAULT_RECOMMENDATION_FACTORS,
+  });
   const [avoidedSignatures, setAvoidedSignatures] = useState<string[]>([]);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [postWear, setPostWear] = useState<PostWearPanelState | null>(null);
 
   const recContext = useCallback(
-    (weatherValue: WeatherResolution = weather) => ({
+    () => ({
       now: nowVal,
       occasion: occasion as 'commute' | 'casual' | 'formal' | 'travel' | 'sport',
-      weatherTempC: weatherValue.weather
-        ? (weatherValue.weather.minTempC + weatherValue.weather.maxTempC) / 2
-        : null,
-      recentItemIds: [] as readonly string[],
+      recentItemIds: recentItemIds(items, nowVal),
+      factors,
     }),
-    [nowVal, occasion, weather],
+    [factors, items, nowVal, occasion],
   );
 
   const refresh = useCallback(async () => {
     setState({ kind: 'loading' });
+    setPanel({ kind: 'none' });
     setPostWear(null);
     try {
-      const [loadedItems, initialWeather, weights] = await Promise.all([
+      const [loadedItems, weights, loadedFactors] = await Promise.all([
         loadItems(),
-        weatherController.loadInitial().catch(() => NO_WEATHER),
         loadFeedbackWeights().catch(() => new Map<string, number>()),
+        loadRecommendationFactors().catch(() => ({ ...DEFAULT_RECOMMENDATION_FACTORS })),
       ]);
       setItems(loadedItems);
-      setWeather(initialWeather);
       setFeedbackWeights(weights);
+      setFactors(loadedFactors);
       if (loadedItems.length === 0) {
         setState({ kind: 'empty' });
         return;
@@ -207,10 +300,8 @@ export default function TodayScreen({
       const result = generateRecommendation(loadedItems, {
         now: nowVal,
         occasion: occasion as 'commute' | 'casual' | 'formal' | 'travel' | 'sport',
-        weatherTempC: initialWeather.weather
-          ? (initialWeather.weather.minTempC + initialWeather.weather.maxTempC) / 2
-          : null,
-        recentItemIds: [],
+        recentItemIds: recentItemIds(loadedItems, nowVal),
+        factors: loadedFactors,
       });
       if (result.ok) {
         setState({ kind: 'ready', result, outfit: result.outfit });
@@ -218,20 +309,27 @@ export default function TodayScreen({
         setState({ kind: 'ready', result, outfit: null });
       }
     } catch {
-      setState({ kind: 'empty' });
+      setState({
+        kind: 'error',
+        message: '衣橱数据没有加载成功。你的衣物仍保存在本机，请重试。',
+      });
     }
-  }, [loadFeedbackWeights, loadItems, occasion, nowVal, weatherController]);
+  }, [loadFeedbackWeights, loadItems, loadRecommendationFactors, occasion, nowVal]);
 
   useEffect(() => {
-    // refresh 内部 setState 在 await 之后（异步回调里），非 effect 同步 setState；
-    // 规则静态分析无法穿透 async 边界，故 disable。.catch 兜底避免未处理 rejection。
+    // refresh 内部 setState 在 await 之后（异步回调里），非 effect 同步 setState。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh().catch(() => {
-      /* 加载失败保留 loading；下次焦点可重试 */
+      /* refresh 自身已把读取失败收敛为可重试 error 状态。 */
     });
   }, [refresh]);
 
-  /** TDY-07：记录穿着成功后打开穿后洗护面板；名称从详情服务取，失败回退 id。 */
+  useEffect(
+    () => subscribeAppPreferences((preferences) => setFactors(preferences.recommendationFactors)),
+    [],
+  );
+
+  /** TDY-07：记录穿着成功后打开穿后洗护面板；详情读取失败也不暴露内部 id。 */
   const openPostWearPanel = useCallback((worn: Outfit) => {
     const slots: { slot: RecommendationSlot; garment: GarmentForRec }[] = [
       { slot: 'top', garment: worn.top },
@@ -242,7 +340,11 @@ export default function TodayScreen({
     void Promise.all(
       slots.map(async ({ slot, garment }): Promise<PostWearEntry> => {
         const detail = await getGarmentDetail(garment.id).catch(() => null);
-        return { garmentId: garment.id, slotLabel: SLOT_LABEL[slot], name: detail?.garment.name ?? garment.id };
+        return {
+          garmentId: garment.id,
+          slotLabel: SLOT_LABEL[slot],
+          name: detail?.garment.name?.trim() || garmentDisplayName(garment),
+        };
       }),
     ).then((entries) => {
       const decisions: Record<string, PostWearAction> = {};
@@ -354,10 +456,11 @@ export default function TodayScreen({
       const candidates = listReplacementCandidates(outfit, slot, items, recContext(), {
         mode,
         feedbackWeights,
+        factors,
       });
       setPanel({ kind: 'replace', slot, candidates });
     },
-    [feedbackWeights, items, mode, recContext],
+    [factors, feedbackWeights, items, mode, recContext],
   );
 
   const chooseReplacement = useCallback(
@@ -393,10 +496,11 @@ export default function TodayScreen({
         avoidSignatures: [...avoidedSignatures, outfitSignature(outfit)],
         lockedHeroId: lockHero ? outfit.top.id : null,
         feedbackWeights,
+        factors,
       });
       return result.ok ? result.outfit : null;
     },
-    [avoidedSignatures, feedbackWeights, items, mode, recContext],
+    [avoidedSignatures, factors, feedbackWeights, items, mode, recContext],
   );
 
   const acceptRegeneration = useCallback(
@@ -405,6 +509,7 @@ export default function TodayScreen({
         mode,
         avoidSignatures: [...avoidedSignatures, outfitSignature(current)],
         feedbackWeights,
+        factors,
       });
       const nextResult: RecResult = result.ok
         ? { ...result, outfit: preview }
@@ -425,7 +530,7 @@ export default function TodayScreen({
         createdAt: nowVal,
       });
     },
-    [avoidedSignatures, feedbackWeights, items, mode, nowVal, occasion, persistFeedback, recContext],
+    [avoidedSignatures, factors, feedbackWeights, items, mode, nowVal, occasion, persistFeedback, recContext],
   );
 
   const applyMode = useCallback(
@@ -433,8 +538,9 @@ export default function TodayScreen({
       const result = regenerateOutfit(items, recContext(), {
         mode: selected,
         avoidSignatures: [],
-        lockedHeroId: selected === 'hero' ? current.top.id : null,
+        lockedHeroId: selected === 'hero' && factors.heroItem ? current.top.id : null,
         feedbackWeights,
+        factors,
       });
       setMode(selected);
       if (result.ok) setState({ kind: 'ready', result, outfit: result.outfit });
@@ -452,37 +558,52 @@ export default function TodayScreen({
         createdAt: nowVal,
       });
     },
-    [feedbackWeights, items, nowVal, occasion, persistFeedback, recContext],
-  );
-
-  const applyWeather = useCallback(
-    (resolution: WeatherResolution) => {
-      setWeather(resolution);
-      setPanel({ kind: 'none' });
-      if (!resolution.weather) return;
-      const result = regenerateOutfit(items, recContext(resolution), {
-        mode,
-        avoidSignatures: [],
-        feedbackWeights,
-      });
-      if (result.ok) setState({ kind: 'ready', result, outfit: result.outfit });
-    },
-    [feedbackWeights, items, mode, recContext],
+    [factors, feedbackWeights, items, nowVal, occasion, persistFeedback, recContext],
   );
 
   const today = formatDate(nowVal);
 
   return (
-    <TabShell title="今天" subtitle={today}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <WeatherBar
-          weather={weather}
-          onOpen={() => setPanel({ kind: 'weather', persistCity: true, busy: false, message: null })}
-        />
+    <TabShell
+      title="今天"
+      subtitle={today}
+      trailing={
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="打开设置"
+          hitSlop={8}
+          onPress={() => router.push('/settings')}
+          style={styles.settingsButton}
+        >
+          <Ionicons name="settings-outline" size={22} color={palette.charcoal} />
+        </Pressable>
+      }
+    >
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+      >
         {feedbackError ? <Text style={styles.errorText}>{feedbackError}</Text> : null}
         {state.kind === 'loading' && (
           <View style={styles.stage}>
             <Text style={styles.stageLabel}>加载今日搭配…</Text>
+          </View>
+        )}
+
+        {state.kind === 'error' && (
+          <View accessibilityRole="alert" style={styles.stateSection}>
+            <Text style={styles.stageNumber}>!</Text>
+            <Text style={styles.stateTitle}>今日搭配加载失败</Text>
+            <Text style={styles.stateDescription}>{state.message}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="重新加载今日搭配"
+              onPress={() => void refresh()}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
+            >
+              <Text style={styles.primaryBtnLabel}>重新加载</Text>
+            </Pressable>
           </View>
         )}
 
@@ -495,9 +616,10 @@ export default function TodayScreen({
             <EmptyStateCard
               eyebrow="01"
               title="先整理 12 件常穿衣物"
-              description="录入 6 件即可预览第一套搭配，录满 12 件解锁可解释的今日推荐。照片只在本机处理，原图不会被覆盖。"
+              description="录入 6 件即可预览第一套搭配，录满 12 件解锁可解释推荐。照片默认保存在本机；仅在你明确同意使用腾讯云抠图时，所选照片才会上传处理，原图不会被覆盖。"
               actionLabel="开始整理衣橱"
-              actionHint="首次激活流程将在 MVP-004 接通"
+              actionHint="打开添加衣物"
+              onAction={() => router.push('/add-garment')}
             />
           </>
         )}
@@ -506,7 +628,7 @@ export default function TodayScreen({
           <EmptyStateCard
             eyebrow="02"
             title="衣橱还差几件"
-            description={`缺槽位：${state.result.missing.join('、')}。补录后即可生成今日搭配。`}
+            description={`缺槽位：${state.result.missing.map((slot) => CATEGORY_LABEL[slot] ?? slot).join('、')}。补录后即可生成今日搭配。`}
             actionLabel="去衣橱补录"
             actionHint="补齐后回到此页自动生成"
           />
@@ -538,66 +660,6 @@ export default function TodayScreen({
           );
         })()}
 
-        {state.kind === 'ready' && state.outfit && panel.kind === 'replace' && (
-          <ReplacementPanel
-            slot={panel.slot}
-            candidates={panel.candidates}
-            onChoose={(candidate) => chooseReplacement(state.outfit!, panel.slot, candidate, state.result)}
-            onClose={() => setPanel({ kind: 'none' })}
-          />
-        )}
-
-        {state.kind === 'ready' && state.outfit && panel.kind === 'regenerate' && (
-          <RegeneratePanel
-            current={state.outfit}
-            panel={panel}
-            onToggleHero={() => {
-              const lockHero = !panel.lockHero;
-              setPanel({
-                ...panel,
-                lockHero,
-                preview: makeRegeneration(state.outfit!, lockHero),
-              });
-            }}
-            onReason={(skipReason) => setPanel({ ...panel, skipReason })}
-            onUse={() => panel.preview && acceptRegeneration(state.outfit!, panel.preview, panel.skipReason)}
-            onClose={() => setPanel({ kind: 'none' })}
-          />
-        )}
-
-        {state.kind === 'ready' && state.outfit && panel.kind === 'mode' && (
-          <ModePanel
-            selected={panel.selected}
-            onSelect={(selected) => setPanel({ kind: 'mode', selected })}
-            onApply={() => applyMode(panel.selected, state.outfit!)}
-            onClose={() => setPanel({ kind: 'none' })}
-          />
-        )}
-
-        {panel.kind === 'weather' && (
-          <WeatherPanel
-            panel={panel}
-            onPanel={setPanel}
-            controller={weatherController}
-            onUse={applyWeather}
-            onNoWeather={() => applyWeather(NO_WEATHER)}
-          />
-        )}
-
-        {state.kind === 'recording' && state.outfit && (
-          <RecordingForm
-            outfit={state.outfit}
-            occasion={occasion}
-            comfort={state.comfort}
-            onChangeOccasion={(v) => setState({ ...state, occasion: v })}
-            onChangeComfort={(v) => setState({ ...state, comfort: v })}
-            onCancel={() =>
-              setState({ kind: 'ready', result: state.result, outfit: state.outfit })
-            }
-            onSubmit={() => handleSubmit(state.outfit, state.occasion, state.comfort)}
-          />
-        )}
-
         {state.kind === 'submitted' && state.outfit && (
           <View style={styles.stage}>
             <Text style={styles.stageNumber}>{state.inserted ? '✓' : '—'}</Text>
@@ -613,17 +675,120 @@ export default function TodayScreen({
             </Pressable>
           </View>
         )}
+      </ScrollView>
 
-        {state.kind === 'submitted' && postWear && (
+      {state.kind === 'ready' && state.outfit && panel.kind === 'replace' && (
+        <ActionModal title={`只换${SLOT_LABEL[panel.slot]}`} onClose={() => setPanel({ kind: 'none' })}>
+          <ReplacementPanel
+            slot={panel.slot}
+            candidates={panel.candidates}
+            onChoose={(candidate) => chooseReplacement(state.outfit!, panel.slot, candidate, state.result)}
+            onClose={() => setPanel({ kind: 'none' })}
+          />
+        </ActionModal>
+      )}
+
+      {state.kind === 'ready' && state.outfit && panel.kind === 'regenerate' && (
+        <ActionModal title="换一套" onClose={() => setPanel({ kind: 'none' })}>
+          <RegeneratePanel
+            current={state.outfit}
+            panel={panel}
+            onToggleHero={() => {
+              const lockHero = !panel.lockHero;
+              setPanel({
+                ...panel,
+                lockHero,
+                preview: makeRegeneration(state.outfit!, lockHero),
+              });
+            }}
+            onReason={(skipReason) => setPanel({ ...panel, skipReason })}
+            onUse={() => panel.preview && acceptRegeneration(state.outfit!, panel.preview, panel.skipReason)}
+            onClose={() => setPanel({ kind: 'none' })}
+          />
+        </ActionModal>
+      )}
+
+      {state.kind === 'ready' && state.outfit && panel.kind === 'mode' && (
+        <ActionModal title="推荐模式" onClose={() => setPanel({ kind: 'none' })}>
+          <ModePanel
+            selected={panel.selected}
+            heroEnabled={factors.heroItem}
+            onSelect={(selected) => setPanel({ kind: 'mode', selected })}
+            onApply={() => applyMode(panel.selected, state.outfit!)}
+            onClose={() => setPanel({ kind: 'none' })}
+          />
+        </ActionModal>
+      )}
+
+      {state.kind === 'recording' && state.outfit && (
+        <ActionModal
+          title="记录已穿"
+          onClose={() => setState({ kind: 'ready', result: state.result, outfit: state.outfit })}
+        >
+          <RecordingForm
+            outfit={state.outfit}
+            occasion={occasion}
+            comfort={state.comfort}
+            onChangeOccasion={(v) => setState({ ...state, occasion: v })}
+            onChangeComfort={(v) => setState({ ...state, comfort: v })}
+            onCancel={() => setState({ kind: 'ready', result: state.result, outfit: state.outfit })}
+            onSubmit={() => handleSubmit(state.outfit, state.occasion, state.comfort)}
+          />
+        </ActionModal>
+      )}
+
+      {state.kind === 'submitted' && postWear && (
+        <ActionModal title="穿后洗护" onClose={() => setPostWear(null)}>
           <PostWearPanel
             panel={postWear}
             onSelect={choosePostWearAction}
             onDone={() => void submitPostWear()}
             onSkipAll={() => setPostWear(null)}
           />
-        )}
-      </ScrollView>
+        </ActionModal>
+      )}
     </TabShell>
+  );
+}
+
+function ActionModal({
+  title,
+  onClose,
+  children,
+}: PropsWithChildren<{ title: string; onClose: () => void }>) {
+  return (
+    <Modal
+      animationType="slide"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      visible
+      onRequestClose={onClose}
+    >
+      <SafeAreaView accessibilityViewIsModal edges={['top', 'bottom', 'left', 'right']} style={styles.modalRoot}>
+        <View style={styles.modalHeader}>
+          <View style={styles.modalHeadingGroup}>
+            <Text style={styles.modalIndex}>TODAY / ACTION</Text>
+            <Text style={styles.modalTitle}>{title}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`关闭${title}`}
+            hitSlop={8}
+            onPress={onClose}
+            style={styles.modalClose}
+          >
+            <Text style={styles.modalCloseLabel}>关闭</Text>
+          </Pressable>
+        </View>
+        <ScrollView
+          contentContainerStyle={styles.modalScroll}
+          contentInsetAdjustmentBehavior="automatic"
+          keyboardShouldPersistTaps="handled"
+        >
+          {children}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -650,14 +815,20 @@ function OutfitCard({
 }) {
   const top3 = topReasons(reasonCodes, 3);
   return (
-    <View style={styles.card}>
-      <Text style={styles.eyebrow}>今日推荐</Text>
-      <View style={styles.outfitRow}>
-        <OutfitSlot label="上装" name={outfit.top.id} onReplace={() => onReplace('top')} />
-        <OutfitSlot label="下装" name={outfit.bottom.id} onReplace={() => onReplace('bottom')} />
-        <OutfitSlot label="鞋" name={outfit.shoes.id} onReplace={() => onReplace('shoes')} />
+    <View style={styles.outfitCard}>
+      <View style={styles.editorialHeader}>
+        <View style={styles.editorialHeading}>
+          <Text style={styles.eyebrow}>TODAY / EDIT 01</Text>
+          <Text style={styles.outfitTitle}>今日推荐</Text>
+        </View>
+        <Text accessibilityLabel="第一套推荐" style={styles.outfitNumber}>01</Text>
+      </View>
+      <View style={styles.outfitGrid}>
+        <OutfitSlot label="上装" garment={outfit.top} onReplace={() => onReplace('top')} />
+        <OutfitSlot label="下装" garment={outfit.bottom} onReplace={() => onReplace('bottom')} />
+        <OutfitSlot label="鞋" garment={outfit.shoes} onReplace={() => onReplace('shoes')} />
         {outfit.outerwear ? (
-          <OutfitSlot label="外套" name={outfit.outerwear.id} onReplace={() => onReplace('outerwear')} />
+          <OutfitSlot label="外套" garment={outfit.outerwear} onReplace={() => onReplace('outerwear')} />
         ) : null}
       </View>
       <View style={styles.reasonsBox}>
@@ -694,6 +865,8 @@ function OutfitCard({
       </View>
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="就穿这套"
+        accessibilityHint="打开记录已穿表单"
         onPress={onWearThis}
         style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
       >
@@ -703,13 +876,43 @@ function OutfitCard({
   );
 }
 
-function OutfitSlot({ label, name, onReplace }: { label: string; name: string; onReplace: () => void }) {
+function GarmentImage({ garment, compact = false }: { garment: GarmentForRec; compact?: boolean }) {
+  const name = garmentDisplayName(garment);
+  const uri = safeTodayImageUri(garmentImageRelPath(garment));
+  return (
+    <View style={[styles.garmentImageFrame, compact && styles.garmentImageFrameCompact]}>
+      {uri ? (
+        <Image
+          accessibilityLabel={`${name}图片`}
+          source={{ uri }}
+          contentFit="contain"
+          transition={120}
+          style={styles.garmentImage}
+        />
+      ) : (
+        <GarmentArtwork category={garment.category} color={garment.color} compact={compact} />
+      )}
+    </View>
+  );
+}
+
+function OutfitSlot({
+  label,
+  garment,
+  onReplace,
+}: {
+  label: string;
+  garment: GarmentForRec;
+  onReplace: () => void;
+}) {
+  const name = garmentDisplayName(garment);
   return (
     <View style={styles.slot}>
-      <Text style={styles.slotLabel}>{label}</Text>
-      <Text style={styles.slotName} numberOfLines={1}>
-        {name}
-      </Text>
+      <GarmentImage garment={garment} />
+      <View style={styles.slotMeta}>
+        <Text style={styles.slotLabel}>{label}</Text>
+        <Text style={styles.slotName}>{name}</Text>
+      </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`只换${label}`}
@@ -736,24 +939,6 @@ const MODE_LABEL: Record<RecommendationMode, string> = {
   hurry: '赶时间',
 };
 
-function WeatherBar({ weather, onOpen }: { weather: WeatherResolution; onOpen: () => void }) {
-  const text = weather.weather
-    ? `${weather.weather.cityName} ${weather.weather.minTempC}–${weather.weather.maxTempC}℃ · ${
-        weather.status === 'live'
-          ? '刚刚更新'
-          : weather.status === 'cache-fresh'
-            ? '使用缓存'
-            : '离线旧缓存'
-      }`
-    : '未使用天气 · 仍按衣橱规则推荐';
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel="天气设置" onPress={onOpen} style={styles.weatherBar}>
-      <Text style={styles.weatherText}>{text}</Text>
-      <Text style={styles.weatherAction}>设置</Text>
-    </Pressable>
-  );
-}
-
 function ReplacementPanel({
   slot,
   candidates,
@@ -767,7 +952,6 @@ function ReplacementPanel({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>只换{SLOT_LABEL[slot]}</Text>
       <Text style={styles.formHint}>其余单品已固定，仅显示同槽且当前可用的候选。</Text>
       {candidates.length === 0 ? (
         <Text style={styles.errorText}>没有其他可用候选。可先更新洗护状态，或返回换一套。</Text>
@@ -776,11 +960,15 @@ function ReplacementPanel({
           <Pressable
             key={candidate.id}
             accessibilityRole="button"
-            accessibilityLabel={`换成 ${candidate.id}`}
+            accessibilityLabel={`换成 ${garmentDisplayName(candidate)}`}
             onPress={() => onChoose(candidate)}
             style={styles.candidateRow}
           >
-            <Text style={styles.slotName}>{candidate.id}</Text>
+            <GarmentImage garment={candidate} compact />
+            <View style={styles.candidateText}>
+              <Text style={styles.slotLabel}>{CATEGORY_LABEL[candidate.category] ?? '衣物'}</Text>
+              <Text style={styles.slotName}>{garmentDisplayName(candidate)}</Text>
+            </View>
             <Text style={styles.weatherAction}>换成这件</Text>
           </Pressable>
         ))
@@ -793,11 +981,16 @@ function ReplacementPanel({
 }
 
 function MiniOutfit({ outfit }: { outfit: Outfit }) {
+  const garments = [outfit.top, outfit.bottom, outfit.shoes, ...(outfit.outerwear ? [outfit.outerwear] : [])];
   return (
-    <Text style={styles.formHint}>
-      {outfit.top.id} · {outfit.bottom.id} · {outfit.shoes.id}
-      {outfit.outerwear ? ` · ${outfit.outerwear.id}` : ''}
-    </Text>
+    <View style={styles.miniOutfit}>
+      {garments.map((garment) => (
+        <View key={garment.id} style={styles.miniGarment}>
+          <GarmentImage garment={garment} compact />
+          <Text style={styles.miniGarmentName}>{garmentDisplayName(garment)}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -818,7 +1011,6 @@ function RegeneratePanel({
   const reasons = ['不合场景', '不喜欢配色', '今天想换风格'];
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>换一套</Text>
       <Pressable accessibilityRole="button" onPress={onToggleHero} style={styles.secondaryBtn}>
         <Text style={styles.secondaryBtnLabel}>{panel.lockHero ? '✓ ' : ''}保留上装作为主角</Text>
       </Pressable>
@@ -855,21 +1047,24 @@ function RegeneratePanel({
 
 function ModePanel({
   selected,
+  heroEnabled,
   onSelect,
   onApply,
   onClose,
 }: {
   selected: RecommendationMode;
+  heroEnabled: boolean;
   onSelect: (mode: RecommendationMode) => void;
   onApply: () => void;
   onClose: () => void;
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>推荐模式</Text>
       <Text style={styles.formHint}>硬约束始终优先，模式只改变可用衣物的排序。</Text>
       <View style={styles.occasionRow}>
-        {(Object.keys(MODE_LABEL) as RecommendationMode[]).map((value) => (
+        {(Object.keys(MODE_LABEL) as RecommendationMode[])
+          .filter((value) => value !== 'hero' || heroEnabled)
+          .map((value) => (
           <Pressable
             key={value}
             accessibilityRole="button"
@@ -878,82 +1073,13 @@ function ModePanel({
           >
             <Text style={[styles.chipLabel, selected === value && styles.chipLabelActive]}>{MODE_LABEL[value]}</Text>
           </Pressable>
-        ))}
+          ))}
       </View>
       <Pressable accessibilityRole="button" onPress={onApply} style={styles.primaryBtn}>
         <Text style={styles.primaryBtnLabel}>应用模式</Text>
       </Pressable>
       <Pressable accessibilityRole="button" onPress={onClose} style={styles.linkBtn}>
         <Text style={styles.linkBtnLabel}>取消</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function WeatherPanel({
-  panel,
-  onPanel,
-  controller,
-  onUse,
-  onNoWeather,
-}: {
-  panel: Extract<PanelState, { kind: 'weather' }>;
-  onPanel: (panel: PanelState) => void;
-  controller: WeatherController;
-  onUse: (weather: WeatherResolution) => void;
-  onNoWeather: () => void;
-}) {
-  const setBusy = (message: string | null) => onPanel({ ...panel, busy: true, message });
-  const selectCity = async (city: (typeof DEFAULT_CITIES)[number]) => {
-    setBusy(`正在获取${city.name}天气…`);
-    const result = await controller.useCity(city, panel.persistCity).catch(() => NO_WEATHER);
-    onUse(result);
-  };
-  const selectCurrentLocation = async () => {
-    setBusy('仅本次请求前台位置…');
-    const result = await controller.useCurrentLocation();
-    if (result.locationStatus !== 'granted') {
-      onPanel({ ...panel, busy: false, message: '定位未授权，可手选城市或无天气继续。' });
-      return;
-    }
-    onUse(result.weather);
-  };
-  return (
-    <View style={styles.card}>
-      <Text style={styles.eyebrow}>天气设置</Text>
-      <Text style={styles.formHint}>定位只在点击“使用当前位置”后申请，绝不请求后台位置。</Text>
-      <View style={styles.occasionRow}>
-        {DEFAULT_CITIES.map((city) => (
-          <Pressable
-            key={city.id}
-            accessibilityRole="button"
-            disabled={panel.busy}
-            onPress={() => void selectCity(city)}
-            style={styles.chip}
-          >
-            <Text style={styles.chipLabel}>{city.name}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        disabled={panel.busy}
-        onPress={() => onPanel({ ...panel, persistCity: !panel.persistCity })}
-        style={styles.secondaryBtn}
-      >
-        <Text style={styles.secondaryBtnLabel}>{panel.persistCity ? '✓ 记住城市' : '仅本次使用'}</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={panel.busy}
-        onPress={() => void selectCurrentLocation()}
-        style={styles.secondaryBtn}
-      >
-        <Text style={styles.secondaryBtnLabel}>使用当前位置</Text>
-      </Pressable>
-      {panel.message ? <Text style={styles.formHint}>{panel.message}</Text> : null}
-      <Pressable accessibilityRole="button" disabled={panel.busy} onPress={onNoWeather} style={styles.linkBtn}>
-        <Text style={styles.linkBtnLabel}>无天气继续</Text>
       </Pressable>
     </View>
   );
@@ -978,11 +1104,8 @@ function RecordingForm({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>记录已穿</Text>
-      <Text style={styles.formHint}>
-        搭配：{outfit.top.id} · {outfit.bottom.id} · {outfit.shoes.id}
-        {outfit.outerwear ? ` · ${outfit.outerwear.id}` : ''}
-      </Text>
+      <Text style={styles.fieldLabel}>本次搭配</Text>
+      <MiniOutfit outfit={outfit} />
 
       <Text style={styles.fieldLabel}>场景</Text>
       <View style={styles.occasionRow}>
@@ -1049,7 +1172,6 @@ function PostWearPanel({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>穿后洗护</Text>
       <Text style={styles.formHint}>刚穿过的衣物需要洗护吗？逐件选择，默认跳过。</Text>
       {panel.entries.map((entry) => (
         <View key={entry.garmentId} style={styles.postWearRow}>
@@ -1103,32 +1225,66 @@ function PostWearPanel({
 }
 
 const styles = StyleSheet.create({
+  settingsButton: {
+    width: hitTarget.preferred,
+    height: hitTarget.preferred,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.hairline,
+    borderRadius: radius.pill,
+  },
   scroll: {
     paddingBottom: spacing.xxl,
   },
-  weatherBar: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    minHeight: hitTarget.preferred,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.hairline,
-    borderRadius: radius.md,
-    backgroundColor: palette.paperWhite,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  weatherText: {
-    ...typography.bodySm,
-    color: palette.charcoalSoft,
+  modalRoot: {
     flex: 1,
+    backgroundColor: palette.paperWhite,
+  },
+  modalHeader: {
+    minHeight: 104,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.hairline,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  modalHeadingGroup: {
+    flex: 1,
+  },
+  modalIndex: {
+    ...typography.caption,
+    color: palette.mutedGold,
+    letterSpacing: 1.5,
+    marginBottom: spacing.xxs,
+  },
+  modalTitle: {
+    ...typography.title,
+    color: palette.charcoal,
+  },
+  modalClose: {
+    minWidth: hitTarget.preferred,
+    minHeight: hitTarget.preferred,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseLabel: {
+    ...typography.bodySm,
+    color: palette.charcoal,
+  },
+  modalScroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
   weatherAction: {
     ...typography.caption,
-    color: palette.mutedGold,
+    color: palette.charcoal,
   },
   errorText: {
     ...typography.bodySm,
@@ -1150,36 +1306,95 @@ const styles = StyleSheet.create({
     color: palette.charcoalSoft,
     marginTop: spacing.xs,
   },
-  card: {
+  stateSection: {
     marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    backgroundColor: palette.sandSoft,
-    borderWidth: StyleSheet.hairlineWidth,
+    marginTop: spacing.xl,
+    paddingVertical: spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: palette.hairline,
-    borderRadius: radius.lg,
+    gap: spacing.sm,
+  },
+  stateTitle: {
+    ...typography.headline,
+    color: palette.charcoal,
+  },
+  stateDescription: {
+    ...typography.body,
+    color: palette.charcoalSoft,
+    marginBottom: spacing.sm,
+  },
+  card: {
+    paddingBottom: spacing.lg,
+    backgroundColor: palette.paperWhite,
   },
   eyebrow: {
     ...typography.caption,
     fontFamily: 'serif',
-    color: palette.mutedGold,
+    color: palette.charcoalSoft,
     letterSpacing: 2,
     marginBottom: spacing.sm,
   },
-  outfitRow: {
+  outfitCard: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.hairline,
+    backgroundColor: palette.paperWhite,
+  },
+  editorialHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  editorialHeading: {
+    flex: 1,
+  },
+  outfitTitle: {
+    ...typography.title,
+    color: palette.charcoal,
+  },
+  outfitNumber: {
+    ...typography.display,
+    color: palette.mutedGold,
+  },
+  outfitGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   slot: {
-    flex: 1,
-    minWidth: 80,
-    padding: spacing.sm,
+    flexGrow: 1,
+    flexBasis: '46%',
+    minWidth: 132,
+    paddingBottom: spacing.sm,
     backgroundColor: palette.paperWhite,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.hairline,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.hairline,
+  },
+  garmentImageFrame: {
+    width: '100%',
+    aspectRatio: 0.92,
+    backgroundColor: palette.sandSoft,
+    overflow: 'hidden',
+  },
+  garmentImageFrameCompact: {
+    width: 56,
+    aspectRatio: 0.88,
+    flexShrink: 0,
+  },
+  garmentImage: {
+    width: '100%',
+    height: '100%',
+  },
+  slotMeta: {
+    paddingTop: spacing.sm,
+    minHeight: 58,
   },
   slotLabel: {
     ...typography.caption,
@@ -1197,7 +1412,7 @@ const styles = StyleSheet.create({
   },
   slotActionLabel: {
     ...typography.caption,
-    color: palette.mutedGold,
+    color: palette.charcoal,
   },
   reasonsBox: {
     padding: spacing.sm,
@@ -1248,12 +1463,12 @@ const styles = StyleSheet.create({
     minHeight: hitTarget.preferred,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: palette.oxblood,
-    borderRadius: radius.md,
+    backgroundColor: palette.charcoal,
+    borderRadius: radius.sm,
     paddingHorizontal: spacing.lg,
   },
   primaryBtnPressed: {
-    backgroundColor: palette.oxbloodDeep,
+    backgroundColor: palette.charcoalSoft,
   },
   primaryBtnLabel: {
     ...typography.body,
@@ -1270,13 +1485,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     marginBottom: spacing.xs,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.hairline,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.hairline,
     backgroundColor: palette.paperWhite,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  candidateText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  miniOutfit: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  miniGarment: {
+    width: 72,
+  },
+  miniGarmentName: {
+    ...typography.caption,
+    color: palette.charcoal,
+    marginTop: spacing.xs,
   },
   formHint: {
     ...typography.bodySm,

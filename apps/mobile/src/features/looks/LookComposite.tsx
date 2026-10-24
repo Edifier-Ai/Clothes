@@ -32,6 +32,8 @@ interface Decoded {
   aspect: number; // h / w
 }
 
+const PLACEHOLDER_TONES = ['#E6DDD0', '#B9A17B', '#6F3846', '#485A60', '#75716B'] as const;
+
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -88,18 +90,30 @@ export function LookComposite({ items, width, height, selectedId }: LookComposit
         const d = it.imageRelPath ? decoded.get(it.imageRelPath) : undefined;
         const h = w * (d?.aspect ?? 1);
         const key = it.id ?? `item-${idx}`;
+        const placeholderTone = PLACEHOLDER_TONES[idx % PLACEHOLDER_TONES.length];
         return (
           <Group key={key} origin={{ x: cx, y: cy }} transform={[{ rotate: it.rotation }]}>
             {d ? (
               <SkiaImage image={d.image} x={cx - w / 2} y={cy - h / 2} width={w} height={h} fit="fill" />
             ) : (
-              <Rect
-                x={cx - w / 2}
-                y={cy - h / 2}
-                width={w}
-                height={h}
-                color={palette.sandSoft}
-              />
+              <Group>
+                <Rect
+                  x={cx - w / 2}
+                  y={cy - h / 2}
+                  width={w}
+                  height={h}
+                  color={placeholderTone}
+                />
+                <Rect
+                  x={cx - w * 0.32}
+                  y={cy - h * 0.34}
+                  width={w * 0.64}
+                  height={h * 0.68}
+                  color="rgba(255,255,255,0.24)"
+                  style="stroke"
+                  strokeWidth={1}
+                />
+              </Group>
             )}
             {it.id != null && it.id === selectedId ? (
               <Rect

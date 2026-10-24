@@ -144,7 +144,9 @@ export default function PlanScreen() {
                     return rel ? (
                       <Image key={p.id} source={{ uri: originalUri(rel) }} style={styles.thumb} contentFit="cover" />
                     ) : (
-                      <View key={p.id} style={[styles.thumb, styles.thumbBlank]} />
+                      <View key={p.id} style={[styles.thumb, styles.thumbBlank]}>
+                        <View style={styles.thumbMark} />
+                      </View>
                     );
                   })}
                 </View>
@@ -231,7 +233,8 @@ const styles = StyleSheet.create({
   dayNumToday: { color: palette.white },
   thumbRow: { flexDirection: 'row', gap: 2, marginTop: 2 },
   thumb: { width: 22, height: 30, borderRadius: 3, backgroundColor: palette.sandSoft },
-  thumbBlank: { borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline },
+  thumbBlank: { borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline, alignItems: 'center', justifyContent: 'center' },
+  thumbMark: { width: 8, height: 12, borderRadius: 2, backgroundColor: palette.mutedGold },
   daySection: { marginTop: spacing.md },
   dayTitle: { ...typography.headline, color: palette.charcoal },
   dayEmpty: { ...typography.bodySm, color: palette.charcoalSoft, marginTop: spacing.xs },

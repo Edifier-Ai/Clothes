@@ -32,7 +32,6 @@ function g(id: string, category: string, overrides: Partial<GarmentForRec> = {})
 const ctx: RecContext = {
   now: 2_000_000,
   occasion: 'commute',
-  weatherTempC: null,
   recentItemIds: [],
 };
 
@@ -181,6 +180,132 @@ describe('排序稳定性与可复现', () => {
     const r = generateRecommendation(items, ctx);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.outfit.top.id).toBe('stale');
+  });
+});
+
+describe('可选择的推荐参考要素', () => {
+  const disabled = {
+    occasion: false,
+    colorHarmony: false,
+    wardrobeActivation: false,
+    repeatAvoidance: false,
+    feedbackLearning: false,
+    heroItem: false,
+  } as const;
+
+  it('关闭久未穿后回到稳定 ID 排序，且不再生成盘活理由', () => {
+    const result = generateRecommendation(
+      [
+        g('z-stale', 'top', { lastWornAt: ctx.now - 40 * 86_400_000 }),
+        g('a-recent', 'top', { lastWornAt: ctx.now - 86_400_000 }),
+        g('b1', 'bottom'),
+        g('s1', 'shoes'),
+      ],
+      { ...ctx, factors: disabled },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.outfit.top.id).toBe('a-recent');
+      expect(result.reasonCodes.some((code) => code.startsWith('NOT_WORN_'))).toBe(false);
+    }
+  });
+
+  it('开启避免近期重复时，优先选择未出现在 recentItemIds 的同槽衣物', () => {
+    const result = generateRecommendation(
+      [g('a-recent', 'top'), g('b-other', 'top'), g('b1', 'bottom'), g('s1', 'shoes')],
+      {
+        ...ctx,
+        recentItemIds: ['a-recent'],
+        factors: { ...disabled, repeatAvoidance: true },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.outfit.top.id).toBe('b-other');
+  });
+
+  it('关闭配色协调后不为配色改选次优上装，也不生成配色理由', () => {
+    const result = generateRecommendation(
+      [
+        g('a-red-top', 'top', { color: '红色' }),
+        g('z-blue-top', 'top', { color: '蓝色' }),
+        g('b-green-bottom', 'bottom', { color: '绿色' }),
+        g('s1', 'shoes'),
+      ],
+      { ...ctx, factors: disabled },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.outfit.top.id).toBe('a-red-top');
+      expect(result.reasonCodes.some((code) => code.startsWith('COLOR_'))).toBe(false);
+    }
+  });
+
+  it('关闭场合后不生成场合理由，也不因场合加入外套', () => {
+    const result = generateRecommendation(
+      [g('t1', 'top'), g('b1', 'bottom'), g('s1', 'shoes'), g('o1', 'outerwear')],
+      { ...ctx, occasion: 'formal', factors: disabled },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.outfit.outerwear).toBeUndefined();
+      expect(result.reasonCodes.some((code) => code.startsWith('OCCASION_'))).toBe(false);
+    }
+  });
+});
+
+describe('上下装配色联合择优', () => {
+  it('最优上装与所有下装冲突时，可选择次优上装形成协调组合', () => {
+    const r = generateRecommendation(
+      [
+        g('a-red-top', 'top', { color: '红色' }),
+        g('z-blue-top', 'top', { color: '蓝色' }),
+        g('b-green-bottom', 'bottom', { color: '绿色' }),
+        g('shoes', 'shoes'),
+      ],
+      ctx,
+    );
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.outfit.top.id).toBe('z-blue-top');
+      expect(r.outfit.bottom.id).toBe('b-green-bottom');
+      expect(r.reasonCodes).toContain('COLOR_HARMONIOUS');
+      expect(r.reasonCodes).not.toContain('COLOR_CLASH_NO_ALT');
+    }
+  });
+
+  it('所有组合都冲突时确定性回退，并如实标注无替代', () => {
+    const r = generateRecommendation(
+      [
+        g('red-top', 'top', { color: 'red' }),
+        g('green-bottom', 'bottom', { color: 'green' }),
+        g('shoes', 'shoes'),
+      ],
+      ctx,
+    );
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.reasonCodes).toContain('COLOR_CLASH_NO_ALT');
+      expect(r.reasonCodes).not.toContain('COLOR_HARMONIOUS');
+    }
+  });
+
+  it('未知自由文本颜色不冒充“配色协调”', () => {
+    const r = generateRecommendation(
+      [
+        g('unknown-top', 'top', { color: '透明色' }),
+        g('blue-bottom', 'bottom', { color: '蓝色' }),
+        g('shoes', 'shoes'),
+      ],
+      ctx,
+    );
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.reasonCodes).not.toContain('COLOR_HARMONIOUS');
+      expect(r.reasonCodes).not.toContain('COLOR_CLASH_NO_ALT');
+    }
   });
 });
 

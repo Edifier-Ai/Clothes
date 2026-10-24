@@ -51,6 +51,7 @@ describe('其余三个主标签页骨架', () => {
     expect(screen.getByText('衣橱')).toBeOnTheScreen();
     expect(screen.getAllByRole('button', { name: '添加衣物' }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: '查看衣橱洞察' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '打开购物守门' })).toBeOnTheScreen();
   });
 
   it('造型页显示标题与空状态主操作', () => {

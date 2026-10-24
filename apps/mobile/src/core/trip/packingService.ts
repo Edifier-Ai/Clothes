@@ -1,6 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
-
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import {
   createPackingItem,
   createTripTemplate,
@@ -13,7 +11,6 @@ import {
 } from '../db/dao';
 import type { PackingItemKind, PackingItemRow, TripTemplateRow } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
-import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 import { listTripOutfitsCore } from './tripService';
 import { computePackingFromOutfits, type PackingItemView, type TripOutfitView } from './packView';
 
@@ -261,87 +258,54 @@ export async function softDeleteTemplateCore(db: GarmentDb, id: string): Promise
 
 /* ---------------- 设备单例 ---------------- */
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-async function persist(): Promise<void> {
-  const app = await db();
-  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 export async function regeneratePacking(tripId: string): Promise<void> {
-  await regeneratePackingCore((await readyDb()).db, tripId);
-  await persist();
+  await regeneratePackingCore((await rt.readyDb()).db, tripId);
+  await rt.persist();
 }
 
 export async function listPackingItems(tripId: string): Promise<PackingItemView[]> {
-  return listPackingItemsCore((await readyDb()).db, tripId);
+  return listPackingItemsCore((await rt.readyDb()).db, tripId);
 }
 
 export async function addManualItem(input: AddManualItemInput): Promise<PackingItemView> {
-  const v = await addManualItemCore((await readyDb()).db, input);
-  await persist();
+  const v = await addManualItemCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return v;
 }
 
 export async function removeManualItem(id: string): Promise<void> {
-  await removeManualItemCore((await readyDb()).db, id);
-  await persist();
+  await removeManualItemCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 export async function toggleCheck(id: string, checked: boolean, now: number = Date.now()): Promise<PackingItemView> {
-  const v = await toggleCheckCore((await readyDb()).db, id, checked, now);
-  await persist();
+  const v = await toggleCheckCore((await rt.readyDb()).db, id, checked, now);
+  await rt.persist();
   return v;
 }
 
 export async function packingItemDetailView(id: string): Promise<PackingItemView | null> {
-  return packingItemDetailViewCore((await readyDb()).db, id);
+  return packingItemDetailViewCore((await rt.readyDb()).db, id);
 }
 
 export async function saveTemplate(input: SaveTemplateInput): Promise<TripTemplateDetail> {
-  const v = await saveTemplateCore((await readyDb()).db, input);
-  await persist();
+  const v = await saveTemplateCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return v;
 }
 
 export async function listTemplates(): Promise<TripTemplateDetail[]> {
-  return listTemplatesCore((await readyDb()).db);
+  return listTemplatesCore((await rt.readyDb()).db);
 }
 
 export async function softDeleteTemplate(id: string): Promise<void> {
-  await softDeleteTemplateCore((await readyDb()).db, id);
-  await persist();
+  await softDeleteTemplateCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
+  rt.resetForTest();
 }

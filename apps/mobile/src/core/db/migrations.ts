@@ -27,7 +27,7 @@ export interface MigrationSql {
 }
 
 /** 当前最新 schema 版本；新增迁移追加到 MIGRATIONS 末尾，version 递增。 */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const MIGRATIONS: readonly MigrationSql[] = [
   {
@@ -312,6 +312,33 @@ CREATE TABLE trip_templates (
   deleted_at INTEGER
 );
 CREATE INDEX trip_templates_active_idx ON trip_templates (deleted_at, updated_at);
+`,
+  },
+  {
+    version: 9,
+    sql: `
+CREATE TABLE shopping_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  price_minor INTEGER,
+  currency TEXT,
+  product_url TEXT,
+  image_rel_path TEXT,
+  image_sha256 TEXT,
+  algorithm_version TEXT NOT NULL,
+  features_json TEXT,
+  results_json TEXT NOT NULL DEFAULT '[]',
+  compatibility_json TEXT NOT NULL DEFAULT '[]',
+  assumed_wears INTEGER NOT NULL DEFAULT 30,
+  verdict TEXT NOT NULL DEFAULT 'undecided',
+  analysis_state TEXT NOT NULL DEFAULT 'pending',
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX shopping_candidates_active_idx ON shopping_candidates (deleted_at, updated_at);
 `,
   },
 ] as const;

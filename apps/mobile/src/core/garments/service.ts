@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import {
   createGarment,
   findActiveByHash,
@@ -18,8 +18,8 @@ import {
 import type { GarmentStatusEventRow, TagKind } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
 import { expoCrypto, makeExpoFs, rnDimReader } from '../files/expoAdapters';
+import { normalizeExifOrientation } from '../files/exif';
 import { originalExists, stageImage, type StagedImage } from '../files/imageStore';
-import { restoreFromMirrorIfNeeded, writeMirror } from './mirror';
 import { listByStatus } from '../db/queue';
 import { batchUpdateGarments, type BatchPatch, type BatchResult } from '../wardrobe/batch';
 import { buildWardrobeItems } from '../wardrobe/query';
@@ -59,51 +59,14 @@ export type AddResult =
   | { kind: 'created'; detail: GarmentDetail }
   | { kind: 'duplicate'; existing: GarmentDetail; staged: StagedImage };
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    // 首次开库后从持久镜像回灌（补齐本机 expo-sqlite 不落盘）。
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-/** 等待开库+回灌完成，确保读写基于最新持久数据。 */
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-/** 写后：把全量数据写入持久镜像（本机真正落盘路径）。
- *  注意：不再 close+reopen 连接——expo-sqlite 连接为单例共享，关闭会使其它持有者
- *  拿到 closed resource；且本机会话内 in-memory 数据已可查询，跨重启由镜像回灌保证。 */
-async function persist(): Promise<void> {
-  const app = await db();
-  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 function deps(ext: string) {
   return {
-    fs: makeExpoFs(root()),
+    fs: makeExpoFs(rt.root()),
     crypto: expoCrypto,
     dims: rnDimReader,
-    rootAbs: root(),
+    rootAbs: rt.root(),
     newId: () => uuidv7(),
     ext,
   };
@@ -122,15 +85,26 @@ function formToTags(form: GarmentForm) {
 /**
  * 阶段一：选图后暂存并算哈希/尺寸；若与未删除衣物同哈希返回 duplicate，
  * 由 UI 让用户确认是否继续（继续时传 force=true 再次调用 commitAdd）。
+ *
+ * EXIF 方向归一化：源图（相机/相册 JPEG）带 Orientation=2..8 时才生成无 EXIF
+ * 临时 PNG；其它图片原样暂存，避免无条件 PNG 膨胀（不覆盖用户原始文件）。
  */
 export async function prepareAdd(sourceUri: string, ext: string): Promise<
   | { kind: 'ready'; staged: StagedImage }
   | { kind: 'duplicate'; existing: GarmentDetail; staged: StagedImage }
 > {
-  const staged = await stageImage(sourceUri, deps(ext));
-  const existing = await findActiveByHash((await readyDb()).db, staged.sha256);
-  if (existing) return { kind: 'duplicate', existing, staged };
-  return { kind: 'ready', staged };
+  const normalized = await normalizeExifOrientation(sourceUri, ext);
+  try {
+    const staged = await stageImage(normalized.uri, deps(normalized.ext));
+    const existing = await findActiveByHash((await rt.readyDb()).db, staged.sha256);
+    if (existing) return { kind: 'duplicate', existing, staged };
+    return { kind: 'ready', staged };
+  } finally {
+    // 只能删本模块生成的缓存文件，绝不能删相册/相机源 URI。
+    if (normalized.temporary) {
+      await FileSystem.deleteAsync(normalized.uri, { idempotent: true }).catch(() => undefined);
+    }
+  }
 }
 
 /** 把已暂存图片落库；DB 失败时清理最终文件，绝不留半条记录或孤儿文件。 */
@@ -144,7 +118,7 @@ export async function commitAdd(
   const { finalAbsPath, relPath } = await staged.commit(id);
   // 反向验证钩子：晋升后、入库前注入失败 → 下方 catch 清理 finalAbsPath，无孤儿/无半条。
   if (await debugFailRequested()) {
-    await makeExpoFs(root()).deleteIfExists(finalAbsPath);
+    await makeExpoFs(rt.root()).deleteIfExists(finalAbsPath);
     throw new Error('debug-injected commit failure');
   }
   const input: CreateGarmentInput = {
@@ -164,15 +138,15 @@ export async function commitAdd(
     now,
   };
   try {
-    await createGarment((await readyDb()).db, input);
+    await createGarment((await rt.readyDb()).db, input);
   } catch (err) {
     // 事务已回滚；删除已晋升的最终文件，避免孤儿。
-    await makeExpoFs(root()).deleteIfExists(finalAbsPath);
+    await makeExpoFs(rt.root()).deleteIfExists(finalAbsPath);
     throw err;
   }
   // 强制落盘：关闭+重开连接，确保强杀/断电不丢本次写入。
-  await persist();
-  const detail = await getGarment((await readyDb()).db, id);
+  await rt.persist();
+  const detail = await getGarment((await rt.readyDb()).db, id);
   if (!detail) throw new Error('commit succeeded but detail missing');
   return detail;
 }
@@ -190,42 +164,42 @@ export async function addGarment(
 }
 
 export async function listGarments() {
-  return listActiveGarments((await readyDb()).db);
+  return listActiveGarments((await rt.readyDb()).db);
 }
 
 /** 衣橱网格数据源：活动衣物 + 展示图路径（抠图缩略图/预览优先，原图兜底）。 */
 export async function listActiveGarmentsWithThumbs(): Promise<WardrobeListItem[]> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   return listWithThumbs(app.db, app.drizzleDb);
 }
 
 export async function getGarmentDetail(id: string) {
-  return getGarment((await readyDb()).db, id);
+  return getGarment((await rt.readyDb()).db, id);
 }
 
 export async function editGarment(id: string, patch: UpdateGarmentInput) {
-  const r = await updateGarment((await readyDb()).db, id, patch, Date.now());
-  await persist();
+  const r = await updateGarment((await rt.readyDb()).db, id, patch, Date.now());
+  await rt.persist();
   return r;
 }
 
 export async function deleteGarment(id: string) {
-  const r = await softDeleteGarment((await readyDb()).db, id, Date.now());
-  await persist();
+  const r = await softDeleteGarment((await rt.readyDb()).db, id, Date.now());
+  await rt.persist();
   return r;
 }
 
 export async function restoreDeletedGarment(id: string) {
-  const r = await restoreGarment((await readyDb()).db, id, Date.now());
-  await persist();
+  const r = await restoreGarment((await rt.readyDb()).db, id, Date.now());
+  await rt.persist();
   return r;
 }
 
 /** UI 用：判断某衣物的原图私有副本是否仍在（缺失→可修复状态，不删记录）。 */
 export async function assetExists(detail: GarmentDetail) {
   return originalExists(detail.asset.originalRelPath, {
-    fs: makeExpoFs(root()),
-    rootAbs: root(),
+    fs: makeExpoFs(rt.root()),
+    rootAbs: rt.root(),
   });
 }
 
@@ -261,7 +235,7 @@ export async function queryWardrobe(
   filter: WardrobeFilter,
   sort: WardrobeSort = 'recentAdded',
 ): Promise<WardrobeEntry[]> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   const [items, assets, jobs] = await Promise.all([
     buildWardrobeItems(app.db, app.drizzleDb),
     app.db.getAllAssets(),
@@ -282,38 +256,38 @@ export async function queryWardrobe(
 }
 
 export async function setGarmentStatus(id: string, to: CareStatus): Promise<StatusChangeResult> {
-  const r = await changeGarmentStatus((await readyDb()).db, id, to, Date.now());
-  await persist();
+  const r = await changeGarmentStatus((await rt.readyDb()).db, id, to, Date.now());
+  await rt.persist();
   return r;
 }
 
 export async function archiveGarmentById(id: string): Promise<StatusChangeResult> {
-  const r = await archiveGarment((await readyDb()).db, id, Date.now());
-  await persist();
+  const r = await archiveGarment((await rt.readyDb()).db, id, Date.now());
+  await rt.persist();
   return r;
 }
 
 export async function unarchiveGarmentById(id: string): Promise<StatusChangeResult> {
-  const r = await unarchiveGarment((await readyDb()).db, id, Date.now());
-  await persist();
+  const r = await unarchiveGarment((await rt.readyDb()).db, id, Date.now());
+  await rt.persist();
   return r;
 }
 
 /** 批量状态/归档/加标签：单事务，任一失败整体回滚。 */
 export async function batchUpdate(ids: readonly string[], patch: BatchPatch): Promise<BatchResult> {
-  const r = await batchUpdateGarments((await readyDb()).db, ids, patch, Date.now());
-  await persist();
+  const r = await batchUpdateGarments((await rt.readyDb()).db, ids, patch, Date.now());
+  await rt.persist();
   return r;
 }
 
 /** 状态历史（时间升序）。 */
 export async function getStatusHistory(id: string): Promise<GarmentStatusEventRow[]> {
-  return listGarmentStatusEvents((await readyDb()).db, id);
+  return listGarmentStatusEvents((await rt.readyDb()).db, id);
 }
 
 /** 详情统计：真实穿着次数/最近时间/成本次/使用造型。 */
 export async function getGarmentStatsById(id: string): Promise<GarmentStats | null> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   const g = await app.db.getActiveGarment(id);
   if (!g) return null;
   return getGarmentStats(app.drizzleDb, g);
@@ -323,15 +297,14 @@ export async function getGarmentStatsById(id: string): Promise<GarmentStats | nu
 export async function applyPostWear(
   decisions: readonly { garmentId: string; action: PostWearAction }[],
 ): Promise<PostWearResult> {
-  const r = await applyPostWearCare((await readyDb()).db, decisions, Date.now());
-  await persist();
+  const r = await applyPostWearCare((await rt.readyDb()).db, decisions, Date.now());
+  await rt.persist();
   return r;
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
+  rt.resetForTest();
 }
 
 /**
@@ -341,7 +314,7 @@ export function __resetForTest() {
  */
 async function debugFailRequested(): Promise<boolean> {
   try {
-    const info = await FileSystem.getInfoAsync(`${root()}/_debug_fail_commit`);
+    const info = await FileSystem.getInfoAsync(`${rt.root()}/_debug_fail_commit`);
     return info.exists;
   } catch {
     return false;

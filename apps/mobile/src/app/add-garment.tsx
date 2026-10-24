@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -15,7 +15,6 @@ import { Image } from 'expo-image';
 import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { extFromUri } from '@/core/files/uri';
 import {
-  addGarment,
   commitAdd,
   prepareAdd,
   type GarmentForm,
@@ -40,7 +39,8 @@ const CATEGORIES: { value: CreateGarmentInput['category']; label: string }[] = [
 export default function AddGarmentScreen() {
   const router = useRouter();
   const [picked, setPicked] = useState<{ uri: string; ext: string } | null>(null);
-  const [staged, setStaged] = useState<StagedImage | null>(null);
+  const stagedRef = useRef<StagedImage | null>(null);
+  const mountedRef = useRef(true);
   const [duplicate, setDuplicate] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +51,16 @@ export default function AddGarmentScreen() {
     season: '',
     occasion: '',
   });
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const pending = stagedRef.current;
+      stagedRef.current = null;
+      if (pending) void pending.abort().catch(() => undefined);
+    };
+  }, []);
 
   const pick = useCallback(async () => {
     setError(null);
@@ -70,9 +80,17 @@ export default function AddGarmentScreen() {
     setBusy(true);
     try {
       const prepared = await prepareAdd(asset.uri, ext);
+      if (!mountedRef.current) {
+        await prepared.staged.abort().catch(() => undefined);
+        return;
+      }
+      const previous = stagedRef.current;
+      stagedRef.current = prepared.staged;
       setPicked({ uri: asset.uri, ext });
-      setStaged(prepared.staged);
       setDuplicate(prepared.kind === 'duplicate');
+      if (previous && previous !== prepared.staged) {
+        await previous.abort().catch(() => undefined);
+      }
     } catch {
       setError('读取图片失败：文件不可读或已损坏。');
     } finally {
@@ -81,29 +99,21 @@ export default function AddGarmentScreen() {
   }, []);
 
   const save = useCallback(async () => {
+    const staged = stagedRef.current;
     if (!staged || !picked) return;
     setBusy(true);
     setError(null);
     try {
-      if (duplicate) {
-        await commitAdd(staged, form, picked.ext); // 用户已确认继续
-      } else {
-        const r = await addGarment(picked.uri, picked.ext, form);
-        if (r.kind === 'duplicate') {
-          setStaged(r.staged);
-          setDuplicate(true);
-          setError('检测到相同图片的衣物。确认仍要添加请再次点击保存。');
-          setBusy(false);
-          return;
-        }
-      }
+      // prepareAdd 已完成校验/去重和暂存；保存必须提交同一份 staged，不能再次 prepare。
+      await commitAdd(staged, form, picked.ext);
+      if (stagedRef.current === staged) stagedRef.current = null;
       router.back();
     } catch {
       setError('保存失败：请重试。已填写的内容已保留。');
     } finally {
       setBusy(false);
     }
-  }, [staged, picked, duplicate, form, router]);
+  }, [picked, form, router]);
 
   return (
     <View style={styles.root}>

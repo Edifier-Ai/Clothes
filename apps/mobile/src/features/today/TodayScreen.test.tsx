@@ -1,10 +1,20 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
-import TodayScreen from './TodayScreen';
+import TodayScreen, { loadTodayItems, type TodayGarment } from './TodayScreen';
 import type { GarmentForRec, Outfit } from '@/core/recommend';
-import type { WeatherController } from './todayWeather';
 import { applyPostWear } from '@/core/garments/service';
+import { palette } from '@/design-system';
+
+const mockPush = jest.fn();
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+jest.mock('@expo/vector-icons', () => ({
+  Ionicons: () => null,
+}));
 
 // TDY-07：穿后洗护面板走 service 层；这里mock掉，避免触碰真实 DB/文件系统。
 jest.mock('@/core/garments/service', () => ({
@@ -14,7 +24,22 @@ jest.mock('@/core/garments/service', () => ({
 
 const applyPostWearMock = applyPostWear as jest.MockedFunction<typeof applyPostWear>;
 
-function g(id: string, category: GarmentForRec['category']): GarmentForRec {
+const NAMES: Record<string, string> = {
+  t1: '白色亚麻衬衫',
+  t2: '海军蓝针织衫',
+  t3: '酒红真丝上衣',
+  b1: '黑色直筒裤',
+  b2: '沙色半裙',
+  b3: '深蓝牛仔裤',
+  s1: '黑色乐福鞋',
+  s2: '白色运动鞋',
+  o1: '驼色风衣',
+  o2: '炭灰西装',
+  f1: '丝巾',
+  f2: '皮带',
+};
+
+function g(id: string, category: GarmentForRec['category']): TodayGarment {
   return {
     id,
     category,
@@ -23,6 +48,8 @@ function g(id: string, category: GarmentForRec['category']): GarmentForRec {
     updatedAt: 1_000_000,
     lastWornAt: null,
     timesWorn: 0,
+    displayName: NAMES[id] ?? '常穿衣物',
+    imageRelPath: `derivatives/${id}.png`,
   };
 }
 
@@ -41,30 +68,6 @@ const twelveItems: GarmentForRec[] = [
   g('f2', 'accessory'),
 ];
 
-const noWeatherController: WeatherController = {
-  loadInitial: async () => ({ status: 'none', weather: null }),
-  useCity: async (city) => ({
-    status: 'live',
-    weather: {
-      cityId: city.id,
-      cityName: city.name,
-      latitude: city.latitude,
-      longitude: city.longitude,
-      fetchedAt: 2_000_000,
-      windowStart: 0,
-      windowEnd: 86_400_000,
-      minTempC: 24,
-      maxTempC: 31,
-      conditionCode: '101',
-      provider: 'qweather',
-    },
-  }),
-  useCurrentLocation: async () => ({
-    locationStatus: 'denied',
-    weather: { status: 'none', weather: null },
-  }),
-};
-
 const loadNoFeedback = async () => new Map<string, number>();
 
 /** 走完整「就穿这套 → 完成记录」流程，停在穿后洗护面板出现。 */
@@ -75,7 +78,6 @@ async function submitWearAndOpenPostWearPanel() {
       onSubmit={async () => ({ inserted: true })}
       onFeedback={async () => ({ inserted: true })}
       loadFeedbackWeights={loadNoFeedback}
-      weatherController={noWeatherController}
       now={2_000_000}
     />,
   );
@@ -95,15 +97,81 @@ async function submitWearAndOpenPostWearPanel() {
 describe('TodayScreen（今日页）', () => {
   beforeEach(() => {
     applyPostWearMock.mockClear();
+    mockPush.mockClear();
   });
   it('显示页面标题 今天', () => {
     render(<TodayScreen loadItems={async () => new Promise<GarmentForRec[]>(() => [])} />);
     expect(screen.getByText('今天')).toBeOnTheScreen();
   });
 
+  it('齿轮入口打开真实设置路由', () => {
+    render(<TodayScreen loadItems={async () => new Promise<GarmentForRec[]>(() => [])} />);
+    fireEvent.press(screen.getByRole('button', { name: '打开设置' }));
+    expect(mockPush).toHaveBeenCalledWith('/settings');
+  });
+
   it('加载中显示加载提示', () => {
     render(<TodayScreen loadItems={async () => new Promise<GarmentForRec[]>(() => [])} />);
     expect(screen.getByText('加载今日搭配…')).toBeOnTheScreen();
+  });
+
+  it('从 DAO 展示项装配真实名称、最佳图片、颜色与穿着统计', async () => {
+    const garment = {
+      id: '018f2e62-9bea-7e8b-a0a4-7a4861000001',
+      name: '象牙白真丝衬衫',
+      category: 'top',
+      status: 'clean',
+      priceMinor: null,
+      currency: null,
+      purchaseDate: null,
+      archivedAt: null,
+      deletedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    };
+    const source = {
+      listGarmentsWithImages: jest.fn(async () => [
+        { garment, imageRelPath: 'cutouts/thumb-ivory.png' },
+      ]),
+      loadWearStats: jest.fn(async () =>
+        new Map([[garment.id, { lastWornAt: 19, timesWorn: 7 }]]),
+      ),
+      loadTags: jest.fn(async () => [
+        { garmentId: garment.id, kind: 'color', value: 'ivory' },
+      ]),
+    };
+
+    const result = await loadTodayItems(source);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: garment.id,
+        displayName: '象牙白真丝衬衫',
+        imageRelPath: 'cutouts/thumb-ivory.png',
+        color: 'ivory',
+        lastWornAt: 19,
+        timesWorn: 7,
+      }),
+    ]);
+    expect(source.listGarmentsWithImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('衣橱读取失败展示独立错误态和重试，不冒充空衣橱', async () => {
+    const loadItems = jest
+      .fn<() => Promise<GarmentForRec[]>>()
+      .mockRejectedValueOnce(new Error('sqlite unavailable'))
+      .mockResolvedValueOnce([]);
+    render(<TodayScreen loadItems={loadItems} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('今日搭配加载失败')).toBeOnTheScreen();
+    });
+    expect(screen.queryByText('尚无今日搭配')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: '重新加载今日搭配' }));
+    await waitFor(() => {
+      expect(screen.getByText('尚无今日搭配')).toBeOnTheScreen();
+    });
+    expect(loadItems).toHaveBeenCalledTimes(2);
   });
 
   it('衣橱空时展示空状态与 12 件启动包说明', async () => {
@@ -113,6 +181,9 @@ describe('TodayScreen（今日页）', () => {
     });
     expect(screen.getByText('先整理 12 件常穿衣物')).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: '开始整理衣橱' })).toBeOnTheScreen();
+    expect(screen.getByText(/明确同意使用腾讯云抠图/)).toBeOnTheScreen();
+    fireEvent.press(screen.getByRole('button', { name: '开始整理衣橱' }));
+    expect(mockPush).toHaveBeenCalledWith('/add-garment');
   });
 
   it('12 件合法衣橱展示推荐搭配与理由', async () => {
@@ -120,7 +191,6 @@ describe('TodayScreen（今日页）', () => {
       <TodayScreen
         loadItems={async () => twelveItems}
         loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
         now={2_000_000}
       />,
     );
@@ -128,7 +198,11 @@ describe('TodayScreen（今日页）', () => {
       expect(screen.getByText('今日推荐')).toBeOnTheScreen();
     });
     expect(screen.getByText('推荐理由')).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: '就穿这套' })).toBeOnTheScreen();
+    const primary = screen.getByRole('button', { name: '就穿这套' });
+    expect(primary).toBeOnTheScreen();
+    expect(primary).toHaveStyle({ backgroundColor: palette.charcoal, minHeight: 48 });
+    expect(primary).toHaveProp('accessibilityHint', '打开记录已穿表单');
+    expect(screen.getByLabelText('白色亚麻衬衫图片')).toBeOnTheScreen();
   });
 
   it('缺鞋时展示缺槽位提示', async () => {
@@ -137,7 +211,7 @@ describe('TodayScreen（今日页）', () => {
     await waitFor(() => {
       expect(screen.getByText('衣橱还差几件')).toBeOnTheScreen();
     });
-    expect(screen.getByText(/shoes/)).toBeOnTheScreen();
+    expect(screen.getByText(/缺槽位：鞋/)).toBeOnTheScreen();
   });
 
   it('点击就穿这套后进入记录已穿表单', async () => {
@@ -163,7 +237,6 @@ describe('TodayScreen（今日页）', () => {
         onSubmit={onSubmit}
         onFeedback={async () => ({ inserted: true })}
         loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
         now={2_000_000}
       />,
     );
@@ -191,18 +264,19 @@ describe('TodayScreen（今日页）', () => {
         loadItems={async () => twelveItems}
         onFeedback={onFeedback}
         loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
         now={2_000_000}
       />,
     );
     await waitFor(() => expect(screen.getByRole('button', { name: '只换上装' })).toBeOnTheScreen());
     fireEvent.press(screen.getByRole('button', { name: '只换上装' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '换成 t2' })).toBeOnTheScreen());
-    fireEvent.press(screen.getByRole('button', { name: '换成 t2' }));
-    await waitFor(() => expect(screen.getByText('t2')).toBeOnTheScreen());
-    expect(screen.getByText('b1')).toBeOnTheScreen();
-    expect(screen.getByText('s1')).toBeOnTheScreen();
-    expect(screen.getByText('o1')).toBeOnTheScreen();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '换成 海军蓝针织衫' })).toBeOnTheScreen(),
+    );
+    fireEvent.press(screen.getByRole('button', { name: '换成 海军蓝针织衫' }));
+    await waitFor(() => expect(screen.getByText('海军蓝针织衫')).toBeOnTheScreen());
+    expect(screen.getByText('黑色直筒裤')).toBeOnTheScreen();
+    expect(screen.getByText('黑色乐福鞋')).toBeOnTheScreen();
+    expect(screen.getByText('驼色风衣')).toBeOnTheScreen();
     await waitFor(() =>
       expect(onFeedback).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -215,6 +289,45 @@ describe('TodayScreen（今日页）', () => {
     );
   });
 
+  it('替换覆盖层在当前视野可见并可通过标题栏关闭', async () => {
+    render(
+      <TodayScreen
+        loadItems={async () => twelveItems}
+        loadFeedbackWeights={loadNoFeedback}
+        now={2_000_000}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: '只换上装' })).toBeOnTheScreen());
+    fireEvent.press(screen.getByRole('button', { name: '只换上装' }));
+    expect(screen.getByRole('button', { name: '关闭只换上装' })).toBeOnTheScreen();
+    expect(screen.getByText('其余单品已固定，仅显示同槽且当前可用的候选。')).toBeOnTheScreen();
+    fireEvent.press(screen.getByRole('button', { name: '关闭只换上装' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '关闭只换上装' })).toBeNull();
+    });
+    expect(screen.getByRole('button', { name: '就穿这套' })).toBeOnTheScreen();
+  });
+
+  it('主界面与换一套预览只展示衣物名称，不展示内部 UUID', async () => {
+    const internalId = '018f2e62-9bea-7e8b-a0a4-7a4861abcdef';
+    const namedItems = twelveItems.map((item, index) =>
+      index === 0 ? { ...item, id: internalId, displayName: '象牙白真丝衬衫' } : item,
+    );
+    render(
+      <TodayScreen
+        loadItems={async () => namedItems}
+        loadFeedbackWeights={loadNoFeedback}
+        now={2_000_000}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('象牙白真丝衬衫')).toBeOnTheScreen());
+    expect(screen.queryByText(internalId)).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: '换一套' }));
+    expect(screen.getByText('新搭配预览')).toBeOnTheScreen();
+    expect(screen.queryByText(internalId)).toBeNull();
+    expect(screen.getAllByLabelText(/图片$/).length).toBeGreaterThan(0);
+  });
+
   it('换一套显示跳过原因与新搭配，采用后不重复原组合', async () => {
     const onFeedback = jest.fn(async () => ({ inserted: true }));
     render(
@@ -222,7 +335,6 @@ describe('TodayScreen（今日页）', () => {
         loadItems={async () => twelveItems}
         onFeedback={onFeedback}
         loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
         now={2_000_000}
       />,
     );
@@ -245,7 +357,6 @@ describe('TodayScreen（今日页）', () => {
         loadItems={async () => twelveItems}
         onFeedback={async () => ({ inserted: true })}
         loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
         now={2_000_000}
       />,
     );
@@ -259,23 +370,6 @@ describe('TodayScreen（今日页）', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '推荐模式 · 新鲜' })).toBeOnTheScreen(),
     );
-  });
-
-  it('定位拒绝后可手选上海，也可无天气继续', async () => {
-    render(
-      <TodayScreen
-        loadItems={async () => twelveItems}
-        loadFeedbackWeights={loadNoFeedback}
-        weatherController={noWeatherController}
-        now={2_000_000}
-      />,
-    );
-    await waitFor(() => expect(screen.getByRole('button', { name: '天气设置' })).toBeOnTheScreen());
-    fireEvent.press(screen.getByRole('button', { name: '天气设置' }));
-    fireEvent.press(screen.getByRole('button', { name: '使用当前位置' }));
-    await waitFor(() => expect(screen.getByText(/定位未授权/)).toBeOnTheScreen());
-    fireEvent.press(screen.getByRole('button', { name: '上海' }));
-    await waitFor(() => expect(screen.getByText(/上海 24–31℃/)).toBeOnTheScreen());
   });
 
   it('记录穿着成功后出现穿后洗护面板并列出穿过的衣物', async () => {

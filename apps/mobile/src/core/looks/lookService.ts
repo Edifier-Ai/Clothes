@@ -1,6 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
-
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import {
   createLook,
   getLookWithItems,
@@ -14,7 +12,6 @@ import {
 } from '../db/dao';
 import type { LookMode, LookSlot } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
-import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 import { listByStatus } from '../db/queue';
 import { buildCoverSpec, type CoverSpec } from './cover';
 import { cloneLook, createVariant, type DerivedLook, type VariantChange } from './lookFactory';
@@ -182,82 +179,48 @@ async function resolveImageMap(
 
 /* ---------------- 设备单例（仿 garments/service） ---------------- */
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-/** 等待开库+回灌完成，确保读写基于最新持久数据。 */
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-/** 写后落持久镜像（本机真正落盘路径）。草稿除外（meta 不入镜像）。 */
-async function persist(): Promise<void> {
-  const app = await db();
-  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 export async function saveLook(input: SaveLookInput): Promise<LookDetail> {
-  const detail = await saveLookCore((await readyDb()).db, input);
-  await persist();
+  const detail = await saveLookCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return detail;
 }
 
 export async function listLooks(): Promise<LookDetail[]> {
-  return listLooksCore((await readyDb()).db);
+  return listLooksCore((await rt.readyDb()).db);
 }
 
 export async function getLookDetail(id: string): Promise<LookDetail | null> {
-  return getLookDetailCore((await readyDb()).db, id);
+  return getLookDetailCore((await rt.readyDb()).db, id);
 }
 
 export async function deleteLook(id: string): Promise<void> {
-  await deleteLookCore((await readyDb()).db, id);
-  await persist();
+  await deleteLookCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 export async function saveDraft(draft: LookDraft): Promise<void> {
-  await saveDraftCore((await readyDb()).db, draft);
+  await saveDraftCore((await rt.readyDb()).db, draft);
 }
 
 export async function loadDraft(): Promise<LookDraft | null> {
-  return loadDraftCore((await readyDb()).db);
+  return loadDraftCore((await rt.readyDb()).db);
 }
 
 export async function clearDraft(): Promise<void> {
-  await clearDraftCore((await readyDb()).db);
+  await clearDraftCore((await rt.readyDb()).db);
 }
 
 export async function createVariantLook(lookId: string, change: VariantChange): Promise<LookDetail> {
-  const detail = await createVariantLookCore((await readyDb()).db, lookId, change);
-  await persist();
+  const detail = await createVariantLookCore((await rt.readyDb()).db, lookId, change);
+  await rt.persist();
   return detail;
 }
 
 export async function cloneLookById(lookId: string): Promise<LookDetail> {
-  const detail = await cloneLookByIdCore((await readyDb()).db, lookId);
-  await persist();
+  const detail = await cloneLookByIdCore((await rt.readyDb()).db, lookId);
+  await rt.persist();
   return detail;
 }
 
@@ -267,7 +230,7 @@ export async function cloneLookById(lookId: string): Promise<LookDetail> {
  * 归档/缺失为 null 占位。
  */
 export async function rebuildCoverSpec(lookId: string): Promise<CoverSpec | null> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   const detail = await getLookWithItems(app.db, lookId);
   if (!detail) return null;
   const jobs = await listByStatus(app.drizzleDb, 'succeeded');
@@ -287,6 +250,5 @@ export async function rebuildCoverSpec(lookId: string): Promise<CoverSpec | null
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
+  rt.resetForTest();
 }

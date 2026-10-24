@@ -148,6 +148,7 @@ export interface OnboardState {
 const DEFAULT_STATE: OnboardState = { step: 'welcome', completed: false, goals: [], quotaStarted: false };
 
 const META_KEY = 'onboarding_state';
+const stateListeners = new Set<(state: OnboardState) => void>();
 
 export function parseOnboardState(raw: string | null): OnboardState {
   if (!raw) return { ...DEFAULT_STATE };
@@ -170,6 +171,16 @@ export async function loadOnboardState(db: GarmentDb): Promise<OnboardState> {
 
 export async function saveOnboardState(db: GarmentDb, state: OnboardState): Promise<void> {
   await db.setMeta(META_KEY, JSON.stringify(state));
+  for (const listener of stateListeners) listener(state);
+}
+
+/**
+ * 根布局订阅 onboarding 的持久状态变化。
+ * 只在 setMeta 成功后通知，避免 UI 已放行但完成标记尚未落盘。
+ */
+export function subscribeOnboardState(listener: (state: OnboardState) => void): () => void {
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
 }
 
 /** 据当前衣物数与完成标记推进步骤。引导前四步由用户推进；quotaStarted 后按件数推进。 */

@@ -7,6 +7,7 @@ import { hitTarget, palette, radius, spacing, typography } from '@/design-system
 import { openAppDb } from '@/core/db/expoDb';
 import { listActiveGarments } from '@/core/db/dao';
 import { addOriginalOnly } from '@/core/cutout/cutoutService';
+import { defaultDemoDataService } from '@/core/demo/demoDataService';
 import { extFromUri } from '@/core/files/uri';
 import {
   buildFirstOutfit,
@@ -76,6 +77,14 @@ function Primary({ label, onPress, disabled }: { label: string; onPress: () => v
   return (
     <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled} style={[styles.btn, disabled && styles.btnDisabled]}>
       <Text style={styles.btnLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Secondary({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled} style={[styles.secondaryBtn, disabled && styles.btnDisabled]}>
+      <Text style={styles.secondaryBtnLabel}>{label}</Text>
     </Pressable>
   );
 }
@@ -179,6 +188,26 @@ export default function OnboardingScreen() {
     router.replace('/');
   };
 
+  const finishLater = async () => {
+    await persist((s) => ({ ...s, completed: true, step: 'done' }));
+    router.replace('/');
+  };
+
+  const startDemo = async () => {
+    if (busy) return;
+    setBusy(true);
+    setNote('');
+    try {
+      await defaultDemoDataService.load();
+      await persist((s) => ({ ...s, completed: true, step: 'done' }));
+      router.replace('/');
+    } catch {
+      setNote('演示体验暂未准备好，你可以重试或按正常流程开始。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!state) return <View style={styles.center}><Text style={styles.muted}>加载中…</Text></View>;
 
   const step = state.step;
@@ -190,21 +219,23 @@ export default function OnboardingScreen() {
       {step === 'welcome' && (
         <Card>
           <Text style={styles.title}>每天 30 秒，穿好再出门</Text>
-          <Text style={styles.body}>用 12 件常穿衣物开始，不必整理整个衣柜。无需账号，照片只在本机处理。</Text>
+          <Text style={styles.body}>用 12 件常穿衣物开始，不必整理整个衣柜。无需账号，衣橱数据默认保存在本机。</Text>
           <Primary label="开始" onPress={advanceIntro} />
+          <Secondary label={busy ? '正在准备演示…' : '直接体验完整 Demo'} onPress={() => void startDemo()} disabled={busy} />
+          {note ? <Text style={styles.note}>{note}</Text> : null}
         </Card>
       )}
       {step === 'value' && (
         <Card>
           <Text style={styles.title}>三步获得价值</Text>
-          <Text style={styles.body}>① 拍/选真实衣物 ② 本地抠图 ③ 得到可解释搭配。原图永不覆盖。</Text>
+          <Text style={styles.body}>① 拍/选真实衣物 ② 明确同意后进行腾讯云抠图 ③ 得到可解释搭配。原图永不覆盖。</Text>
           <Primary label="下一步" onPress={advanceIntro} />
         </Card>
       )}
       {step === 'privacy' && (
         <Card>
           <Text style={styles.title}>本地优先 · 隐私</Text>
-          <Text style={styles.body}>不注册、不上传。衣物、造型、记录默认只在设备。可随时完整导出。</Text>
+          <Text style={styles.body}>无需注册，衣物、造型和记录默认只在设备。只有你明确同意后，衣物照片才会上传腾讯云进行抠图。本演示版数据仅保存在当前设备。</Text>
           <Primary label="本地开始" onPress={advanceIntro} />
         </Card>
       )}
@@ -244,7 +275,7 @@ export default function OnboardingScreen() {
             <Primary label="查看 6 件预览" onPress={() => persist((s) => ({ ...s, step: 'preview' }))} />
           ) : null}
           {itemsCount >= QUOTA_TOTAL ? <Primary label="生成首套搭配" onPress={() => persist((s) => ({ ...s, step: 'reveal' }))} /> : null}
-          <Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.skip}>
+          <Pressable accessibilityRole="button" onPress={() => void finishLater()} style={styles.skip}>
             <Text style={styles.skipTxt}>稍后在衣橱补录</Text>
           </Pressable>
         </Card>
@@ -291,6 +322,8 @@ const styles = StyleSheet.create({
   btn: { minHeight: hitTarget.preferred, borderRadius: radius.md, backgroundColor: palette.oxblood, justifyContent: 'center', alignItems: 'center', marginTop: spacing.md },
   btnDisabled: { opacity: 0.5 },
   btnLabel: { ...typography.body, color: palette.white },
+  secondaryBtn: { minHeight: hitTarget.preferred, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.oxblood, justifyContent: 'center', alignItems: 'center', marginTop: spacing.sm },
+  secondaryBtnLabel: { ...typography.body, color: palette.oxblood },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginVertical: spacing.sm },
   chip: { minHeight: hitTarget.min, paddingHorizontal: spacing.md, justifyContent: 'center', borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline, backgroundColor: palette.white },
   chipOn: { backgroundColor: palette.oxblood, borderColor: palette.oxblood },

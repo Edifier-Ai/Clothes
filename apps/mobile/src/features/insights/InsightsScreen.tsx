@@ -1,4 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -123,6 +124,19 @@ export default function InsightsScreen() {
             >
               <Text style={styles.entryLabel}>月度报告 →</Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="打开购物守门"
+              onPress={() => router.push('/shopping')}
+              style={styles.shoppingEntry}
+            >
+              <View style={styles.shoppingText}>
+                <Text style={styles.shoppingEyebrow}>买前检查</Text>
+                <Text style={styles.shoppingTitle}>用衣橱证据判断新候选</Text>
+                <Text style={styles.shoppingHint}>相似款 · 可搭组合 · 预计成本/次</Text>
+              </View>
+              <Ionicons name="arrow-forward-outline" size={20} color={palette.charcoal} />
+            </Pressable>
           </>
         ) : null}
       </ScrollView>
@@ -180,4 +194,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   entryLabel: { ...typography.body, color: palette.oxblood },
+  shoppingEntry: {
+    minHeight: 84,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.hairline,
+  },
+  shoppingText: { flex: 1, paddingRight: spacing.sm },
+  shoppingEyebrow: { ...typography.caption, color: palette.mutedGold, letterSpacing: 1 },
+  shoppingTitle: { ...typography.body, color: palette.charcoal, marginTop: 2 },
+  shoppingHint: { ...typography.caption, color: palette.charcoalSoft, marginTop: 2 },
 });

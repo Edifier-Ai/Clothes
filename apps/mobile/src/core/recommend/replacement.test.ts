@@ -28,7 +28,6 @@ const now = 2_000_000_000;
 const ctx: RecContext = {
   now,
   occasion: 'commute',
-  weatherTempC: null,
   recentItemIds: [],
 };
 const items = [
@@ -113,5 +112,27 @@ describe('换一套与推荐模式', () => {
       expect(weighted.outfit.top.id).toBe('t2');
       expect(Object.values(weighted.outfit).some((item) => item?.id === 'blocked-favorite')).toBe(false);
     }
+  });
+
+  it('关闭反馈学习后忽略反馈权重，但硬约束与稳定排序不变', () => {
+    const result = regenerateOutfit(items, ctx, {
+      mode: 'safe',
+      avoidSignatures: [],
+      feedbackWeights: new Map([['t2', 100]]),
+      factors: { feedbackLearning: false },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.outfit.top.id).toBe('t1');
+  });
+
+  it('关闭主角单品后忽略 lockedHeroId', () => {
+    const result = regenerateOutfit(items, ctx, {
+      mode: 'hero',
+      lockedHeroId: 't3',
+      avoidSignatures: [],
+      factors: { heroItem: false },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(Object.values(result.outfit).some((item) => item?.id === 't3')).toBe(false);
   });
 });

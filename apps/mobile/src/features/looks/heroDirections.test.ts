@@ -41,14 +41,14 @@ const POOL: GarmentForRec[] = [
 
 describe('buildHeroDirections（LOK-07 三方向）', () => {
   it('返回恰好 3 个方向，模式顺序固定为 safe/fresh/hero', () => {
-    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, recentItemIds: [] });
     expect(dirs).toHaveLength(3);
     expect(dirs.map((d) => d.mode)).toEqual([...HERO_DIRECTION_MODES]);
     expect(dirs.map((d) => d.mode)).toEqual(['safe', 'fresh', 'hero']);
   });
 
   it('每个方向都围绕主角单品且槽位合法', () => {
-    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, recentItemIds: [] });
     for (const d of dirs) {
       expect(d.outfit).not.toBeNull();
       const ids = [d.outfit!.top.id, d.outfit!.bottom.id, d.outfit!.shoes.id, d.outfit!.outerwear?.id];
@@ -63,7 +63,7 @@ describe('buildHeroDirections（LOK-07 三方向）', () => {
   });
 
   it('池子足够时三方向组合互不相同', () => {
-    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(HERO.id, POOL, { now: NOW, occasion: null, recentItemIds: [] });
     const sigs = dirs.map(
       (d) => `${d.outfit!.top.id}|${d.outfit!.bottom.id}|${d.outfit!.shoes.id}|${d.outfit!.outerwear?.id ?? '-'}`,
     );
@@ -71,7 +71,7 @@ describe('buildHeroDirections（LOK-07 三方向）', () => {
   });
 
   it('确定性：同输入两次调用逐字节一致', () => {
-    const ctx = { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] };
+    const ctx = { now: NOW, occasion: null, recentItemIds: [] };
     const a = buildHeroDirections(HERO.id, POOL, ctx);
     const b = buildHeroDirections(HERO.id, POOL, ctx);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
@@ -80,7 +80,7 @@ describe('buildHeroDirections（LOK-07 三方向）', () => {
   it('只使用可用衣物：待洗/归档不进任何方向', () => {
     const dirty = g('shoes-dirty', 'shoes', { status: 'laundry' });
     const archived = g('bottom-archived', 'bottom', { archivedAt: NOW - 5 });
-    const dirs = buildHeroDirections(HERO.id, [...POOL, dirty, archived], { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(HERO.id, [...POOL, dirty, archived], { now: NOW, occasion: null, recentItemIds: [] });
     for (const d of dirs) {
       const ids = [d.outfit!.top.id, d.outfit!.bottom.id, d.outfit!.shoes.id, d.outfit!.outerwear?.id];
       expect(ids).not.toContain(dirty.id);
@@ -89,13 +89,13 @@ describe('buildHeroDirections（LOK-07 三方向）', () => {
   });
 
   it('池子无法组成合法造型时 outfit 为 null（不伪造组合）', () => {
-    const dirs = buildHeroDirections(HERO.id, [HERO], { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(HERO.id, [HERO], { now: NOW, occasion: null, recentItemIds: [] });
     for (const d of dirs) expect(d.outfit).toBeNull();
   });
 
   it('主角类别无法入组合（如配饰）时全部方向为 null', () => {
     const hero = g('hero-acc', 'accessory');
-    const dirs = buildHeroDirections(hero.id, [...POOL, hero], { now: NOW, occasion: null, weatherTempC: null, recentItemIds: [] });
+    const dirs = buildHeroDirections(hero.id, [...POOL, hero], { now: NOW, occasion: null, recentItemIds: [] });
     for (const d of dirs) expect(d.outfit).toBeNull();
   });
 });

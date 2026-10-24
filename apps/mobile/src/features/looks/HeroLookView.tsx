@@ -87,7 +87,7 @@ export function HeroLookView({ heroId }: HeroLookViewProps) {
     });
     setNames(nameMap);
     setDirections(
-      buildHeroDirections(heroId, pool, { now: Date.now(), occasion: null, weatherTempC: null, recentItemIds: [] }),
+      buildHeroDirections(heroId, pool, { now: Date.now(), occasion: null, recentItemIds: [] }),
     );
   }, [heroId]);
 

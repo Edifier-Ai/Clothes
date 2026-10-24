@@ -9,7 +9,7 @@
  * 取 React；imports 放顶部以符合 import/first。
  */
 import { describe, expect, it, jest } from '@jest/globals';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import InsightsScreen from './InsightsScreen';
 import IdleGarmentsScreen from './IdleGarmentsScreen';
@@ -20,8 +20,10 @@ jest.mock('@shopify/flash-list', () => ({ FlashList: () => null }));
 jest.mock('expo-router', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
+  const push = jest.fn();
   return {
-    useRouter: () => ({ push: () => undefined, back: () => undefined }),
+    __routerPush: push,
+    useRouter: () => ({ push, back: () => undefined }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), []),
     useLocalSearchParams: () => ({}),
@@ -80,6 +82,8 @@ const insightsService = require('@/core/insights/insightsService') as {
   getCostPerWearList: () => Promise<unknown>;
   getMonthlyReport: () => Promise<unknown>;
 };
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const routerPush = (require('expo-router') as { __routerPush: jest.Mock }).__routerPush;
 
 describe('洞察四屏外壳（STA-01..04）', () => {
   it('STA-01 总览：标题 + 学习期提示 + 三个入口', async () => {
@@ -89,6 +93,7 @@ describe('洞察四屏外壳（STA-01..04）', () => {
     expect(screen.getByRole('button', { name: '查看久未穿' })).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: '查看成本每次' })).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: '查看月度报告' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '打开购物守门' })).toBeOnTheScreen();
   });
 
   it('STA-01 总览：正常态显示穿着天数/盘活单品/重复率 KPI', async () => {
@@ -113,6 +118,27 @@ describe('洞察四屏外壳（STA-01..04）', () => {
     render(<IdleGarmentsScreen />);
     expect(screen.getByText('久未穿')).toBeOnTheScreen();
     expect(await screen.findByText('还没有久未穿的衣物。继续记录穿着，这里会显示需要被盘活的单品。')).toBeOnTheScreen();
+  });
+
+  it('STA-02 久未穿：为单品搭一套传递 hero 参数，旧深链不会再丢主角', async () => {
+    routerPush.mockClear();
+    const spy = jest.spyOn(insightsService, 'getIdleReport').mockResolvedValue({
+      report: {
+        newUnworn: [{ garmentId: 'g-idle', daysSinceLastWorn: null }],
+        idle30: [], idle60: [], idle90: [],
+      },
+      garmentRows: new Map([
+        ['g-idle', { id: 'g-idle', name: '奶油白衬衫', category: 'top' }],
+      ]),
+    });
+    render(<IdleGarmentsScreen />);
+    const action = await screen.findByRole('button', { name: '为 奶油白衬衫 搭一套' });
+    fireEvent.press(action);
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/look-from-garment',
+      params: { hero: 'g-idle' },
+    });
+    spy.mockRestore();
   });
 
   it('STA-03 成本/次：标题 + 空态提示', async () => {

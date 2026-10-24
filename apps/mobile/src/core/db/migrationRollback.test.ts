@@ -3,9 +3,9 @@
  *
  * MVP-014 反向验证：旧 schema 升级迁移失败 -> ROLLBACK 保留数据 -> 修复后升级成功。
  *
- * 场景：v5 数据库已录入衣物，升级到 v8 时 v6 迁移 SQL 故障（模拟损坏的迁移脚本）。
+ * 场景：v5 数据库已录入衣物，升级到最新版本时 v6 迁移 SQL 故障（模拟损坏的迁移脚本）。
  * 期望：runMigrations 抛错，v5 数据完整保留（schema_version 仍为 5），garments 不丢；
- *      修复后（用正确迁移）升级成功，schema_version=8，数据保留。
+ *      修复后（用正确迁移）升级成功，schema_version=SCHEMA_VERSION，数据保留。
  */
 import { describe, expect, it } from '@jest/globals';
 
@@ -109,7 +109,7 @@ describe('MVP-014 反向验证：迁移失败 ROLLBACK + 修复后升级', () =>
     t.close();
   });
 
-  it('幂等：已升级到 v8 后再次 runMigrations 不重复执行', async () => {
+  it('幂等：已升级到最新版本后再次 runMigrations 不重复执行', async () => {
     const t = await openTestDbAtVersion(5);
     await createGarment(t.db, sample('g1', 'h1'));
     // 第一次升级

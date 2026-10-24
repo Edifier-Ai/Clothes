@@ -11,6 +11,7 @@ import {
   recommendationItems,
   recommendations,
   reasonCodes,
+  shoppingCandidates,
   wearLogItems,
   wearLogs,
   weatherCache,
@@ -20,6 +21,7 @@ import {
   type RecommendationItemRow,
   type RecommendationRow,
   type ReasonCodeRow,
+  type ShoppingCandidateRow,
   type WearLogItemRow,
   type WearLogRow,
   type WeatherCacheRow,
@@ -36,10 +38,11 @@ import {
  * v6 加入 looks + look_items（随 GarmentDump.looks/lookItems，MVP-008 造型）；
  * v7 加入 plans（随 GarmentDump.plans，MVP-009 计划）；
  * v8 加入 trips + trip_outfits + packing_items + trip_templates（随 GarmentDump，
- *   MVP-010 旅行打包）。
+ *   MVP-010 旅行打包）；v9 加入独立 shopping_candidates（MVP-012 买前决策）。
  */
 
 const MIRROR_REL = 'garments_mirror.json';
+const writeQueues = new Map<string, Promise<void>>();
 
 export interface RecDump {
   recommendations: RecommendationRow[];
@@ -47,6 +50,21 @@ export interface RecDump {
   reasonCodes: ReasonCodeRow[];
   wearLogs: WearLogRow[];
   wearLogItems: WearLogItemRow[];
+}
+
+export interface MirrorFileV9 extends GarmentDump {
+  version: 9;
+  updatedAt: number;
+  cutoutJobs: CutoutJobRow[];
+  maskStrokes: MaskStrokeRow[];
+  recommendations: RecommendationRow[];
+  recommendationItems: RecommendationItemRow[];
+  reasonCodes: ReasonCodeRow[];
+  wearLogs: WearLogRow[];
+  wearLogItems: WearLogItemRow[];
+  feedbackEvents: FeedbackEventRow[];
+  weatherCache: WeatherCacheRow[];
+  shoppingCandidates: ShoppingCandidateRow[];
 }
 
 export interface MirrorFileV8 extends GarmentDump {
@@ -142,6 +160,7 @@ export interface MirrorFileV2 extends GarmentDump {
 }
 
 export type MirrorFile =
+  | MirrorFileV9
   | MirrorFileV8
   | MirrorFileV7
   | MirrorFileV6
@@ -160,6 +179,7 @@ async function dumpExtra(drizzleDb: ExpoSQLiteDatabase<typeof schema>): Promise<
   maskStrokes: MaskStrokeRow[];
   feedbackEvents: FeedbackEventRow[];
   weatherCache: WeatherCacheRow[];
+  shoppingCandidates: ShoppingCandidateRow[];
 } & RecDump> {
   const cutoutJobsRows = (await drizzleDb.select().from(cutoutJobs).all()) as unknown as CutoutJobRow[];
   const maskStrokesRows = (await drizzleDb.select().from(maskStrokes).all()) as unknown as MaskStrokeRow[];
@@ -170,6 +190,7 @@ async function dumpExtra(drizzleDb: ExpoSQLiteDatabase<typeof schema>): Promise<
   const wearLogItemRows = (await drizzleDb.select().from(wearLogItems).all()) as unknown as WearLogItemRow[];
   const feedbackRows = (await drizzleDb.select().from(feedbackEvents).all()) as unknown as FeedbackEventRow[];
   const weatherRows = (await drizzleDb.select().from(weatherCache).all()) as unknown as WeatherCacheRow[];
+  const shoppingRows = (await drizzleDb.select().from(shoppingCandidates).all()) as unknown as ShoppingCandidateRow[];
   return {
     cutoutJobs: cutoutJobsRows,
     maskStrokes: maskStrokesRows,
@@ -180,10 +201,11 @@ async function dumpExtra(drizzleDb: ExpoSQLiteDatabase<typeof schema>): Promise<
     wearLogItems: wearLogItemRows,
     feedbackEvents: feedbackRows,
     weatherCache: weatherRows,
+    shoppingCandidates: shoppingRows,
   };
 }
 
-export async function writeMirror(
+async function writeMirrorOnce(
   rootAbs: string,
   db: GarmentDb,
   drizzleDb?: ExpoSQLiteDatabase<typeof schema>,
@@ -191,33 +213,79 @@ export async function writeMirror(
 ): Promise<void> {
   // 干净安装可能尚未经过图片导入流程，持久目录不存在；所有首次业务写入都必须能独立落盘。
   await FileSystem.makeDirectoryAsync(rootAbs, { intermediates: true });
-  await bumpDataVersion(db, now);
   const dump = await dumpAll(db);
   const extra = drizzleDb ? await dumpExtra(drizzleDb) : {
     cutoutJobs: [], maskStrokes: [],
     recommendations: [], recommendationItems: [], reasonCodes: [],
     wearLogs: [], wearLogItems: [],
     feedbackEvents: [], weatherCache: [],
+    shoppingCandidates: [],
   };
-  const payload: MirrorFileV8 = { version: 8, updatedAt: now, ...dump, ...extra };
-  await FileSystem.writeAsStringAsync(mirrorPath(rootAbs), JSON.stringify(payload), {
+  const payload: MirrorFileV9 = { version: 9, updatedAt: now, ...dump, ...extra };
+  const target = mirrorPath(rootAbs);
+  const staged = `${target}.tmp`;
+  const backup = `${target}.bak`;
+  await FileSystem.deleteAsync(staged, { idempotent: true });
+  await FileSystem.writeAsStringAsync(staged, JSON.stringify(payload), {
     encoding: FileSystem.EncodingType.UTF8,
   });
+  const existing = await FileSystem.getInfoAsync(target);
+  if (existing.exists) {
+    await FileSystem.deleteAsync(backup, { idempotent: true });
+    await FileSystem.moveAsync({ from: target, to: backup });
+  }
+  try {
+    await FileSystem.moveAsync({ from: staged, to: target });
+  } catch (error) {
+    // 提交失败时尽力把上一份有效镜像放回；readMirror 也会回退读取 .bak。
+    const previous = await FileSystem.getInfoAsync(backup);
+    if (previous.exists) await FileSystem.moveAsync({ from: backup, to: target }).catch(() => undefined);
+    throw error;
+  }
+  await FileSystem.deleteAsync(backup, { idempotent: true });
+  // 镜像已原子提交后再推进 DB 版本。若这里中断，镜像较新，启动回灌仍能恢复。
+  await bumpDataVersion(db, now);
 }
 
-export async function readMirror(rootAbs: string): Promise<MirrorFile | null> {
+/** 同一根目录串行写，避免多个 service 的全量快照彼此覆盖/交错。 */
+export async function writeMirror(
+  rootAbs: string,
+  db: GarmentDb,
+  drizzleDb?: ExpoSQLiteDatabase<typeof schema>,
+  now: number = Date.now(),
+): Promise<void> {
+  const previous = writeQueues.get(rootAbs) ?? Promise.resolve();
+  const queued = previous.catch(() => undefined).then(() => writeMirrorOnce(rootAbs, db, drizzleDb, now));
+  writeQueues.set(rootAbs, queued);
   try {
-    const info = await FileSystem.getInfoAsync(mirrorPath(rootAbs));
-    if (!info.exists) return null;
-    const text = await FileSystem.readAsStringAsync(mirrorPath(rootAbs), { encoding: FileSystem.EncodingType.UTF8 });
-    return JSON.parse(text) as MirrorFile;
-  } catch {
-    return null;
+    await queued;
+  } finally {
+    if (writeQueues.get(rootAbs) === queued) writeQueues.delete(rootAbs);
   }
 }
 
-async function restoreExtra(drizzleDb: ExpoSQLiteDatabase<typeof schema>, m: MirrorFileV4): Promise<void> {
+export async function readMirror(rootAbs: string): Promise<MirrorFile | null> {
+  const target = mirrorPath(rootAbs);
+  // target 解析失败或原子换名中断时，上一份 .bak 仍是可恢复事实；不读取未提交的 .tmp。
+  for (const path of [target, `${target}.bak`]) {
+    try {
+      const info = await FileSystem.getInfoAsync(path);
+      if (!info.exists) continue;
+      const text = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.UTF8 });
+      return JSON.parse(text) as MirrorFile;
+    } catch {
+      // 尝试下一份有效镜像。
+    }
+  }
+  return null;
+}
+
+async function restoreExtra(
+  drizzleDb: ExpoSQLiteDatabase<typeof schema>,
+  m: MirrorFileV4 & { shoppingCandidates?: ShoppingCandidateRow[] },
+): Promise<void> {
   // 全量替换队列/操作栈/推荐/穿着记录（镜像为事实源）
+  await drizzleDb.delete(shoppingCandidates);
   await drizzleDb.delete(weatherCache);
   await drizzleDb.delete(feedbackEvents);
   await drizzleDb.delete(wearLogItems);
@@ -236,6 +304,9 @@ async function restoreExtra(drizzleDb: ExpoSQLiteDatabase<typeof schema>, m: Mir
   for (const wi of m.wearLogItems) await drizzleDb.insert(wearLogItems).values(wi);
   for (const f of m.feedbackEvents) await drizzleDb.insert(feedbackEvents).values(f);
   for (const w of m.weatherCache) await drizzleDb.insert(weatherCache).values(w);
+  for (const candidate of m.shoppingCandidates ?? []) {
+    await drizzleDb.insert(shoppingCandidates).values(candidate);
+  }
 }
 
 /** 启动时：若镜像较新则回灌 SQLite（含 v3 推荐与穿着记录），返回是否回灌。 */

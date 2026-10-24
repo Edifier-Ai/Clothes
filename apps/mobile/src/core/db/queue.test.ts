@@ -5,18 +5,20 @@ import { describe, expect, it } from '@jest/globals';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 
 import * as schema from './schema';
-import { garments } from './schema';
+import { garmentAssets, garments } from './schema';
 import {
   appendStroke,
   cancel,
   claimNext,
   enqueue,
   getJob,
+  listAll,
   listStrokes,
   markFailed,
   markSucceeded,
   nextOrd,
   popLastStroke,
+  removeLastStrokeRow,
   recoverRunning,
   requeueFailed,
   requeuePending,
@@ -110,6 +112,33 @@ describe('抠图队列状态机', () => {
     t.close();
   });
 
+  it('逐项列表返回真实 garment id、名称与原图；跳过不删除衣物或原图记录', async () => {
+    const t = openQueueTestDb();
+    await seedGarment(t.db, 'real-garment-id');
+    await t.db.insert(garmentAssets).values({
+      id: 'asset-1',
+      garmentId: 'real-garment-id',
+      originalRelPath: 'originals/real-garment-id.png',
+      sha256: 'abc',
+      width: 10,
+      height: 20,
+      bytes: 100,
+      mimeType: 'image/png',
+      createdAt: 1,
+    });
+    await enqueue(t.db, { id: 'queue-job-id', garmentId: 'real-garment-id', sourceStagedPath: '/stage', now: 1 });
+    const [item] = await listAll(t.db);
+    expect(item.job.id).toBe('queue-job-id');
+    expect(item.job.garmentId).toBe('real-garment-id');
+    expect(item.garmentName).toBe('real-garment-id');
+    expect(item.originalRelPath).toBe('originals/real-garment-id.png');
+
+    await cancel(t.db, item.job.id, 2);
+    expect((await t.db.select().from(garments).all()).map((row) => row.id)).toContain('real-garment-id');
+    expect((await t.db.select().from(garmentAssets).all()).map((row) => row.originalRelPath)).toContain('originals/real-garment-id.png');
+    t.close();
+  });
+
   it('requeuePending：临时失败回 pending，保留 attempts 与错误码', async () => {
     const t = openQueueTestDb();
     await seedGarment(t.db, 'g1');
@@ -171,6 +200,24 @@ describe('修边操作栈（撤销/重做边界）', () => {
     const t = openQueueTestDb();
     await seedGarment(t.db, 'g1');
     expect(await popLastStroke(t.db, 'g1')).toBeNull();
+    t.close();
+  });
+
+  it('removeLastStrokeRow 返回完整笔画，供 redo 原样写回', async () => {
+    const t = openQueueTestDb();
+    await seedGarment(t.db, 'g1');
+    await appendStroke(t.db, {
+      id: 'stroke-full',
+      garmentId: 'g1',
+      op: 'restore',
+      pointsJson: '[0.25,0.5]',
+      brushSize: 9,
+      ord: 0,
+      createdAt: 42,
+    });
+    const removed = await removeLastStrokeRow(t.db, 'g1');
+    expect(removed).toMatchObject({ id: 'stroke-full', garmentId: 'g1', op: 'restore', ord: 0 });
+    expect(await listStrokes(t.db, 'g1')).toEqual([]);
     t.close();
   });
 });

@@ -12,7 +12,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
 
 import { createGarment, createLook, dumpAll } from '../db/dao';
-import type * as schema from '../db/schema';
+import * as schema from '../db/schema';
 import { openTestDb, reopenDb } from '../db/sqliteTestHelper';
 // jest.mock 会被提升到模块顶层，mirror 内的 expo-file-system 引用即内存实现
 import { readMirror, restoreFromMirrorIfNeeded, writeMirror } from './mirror';
@@ -29,6 +29,15 @@ jest.mock('expo-file-system/legacy', () => ({
   readAsStringAsync: jest.fn(async (p: string) => mockFiles.get(p) ?? ''),
   writeAsStringAsync: jest.fn(async (p: string, content: string) => {
     mockFiles.set(p, content);
+  }),
+  deleteAsync: jest.fn(async (p: string) => {
+    mockFiles.delete(p);
+  }),
+  moveAsync: jest.fn(async ({ from, to }: { from: string; to: string }) => {
+    const value = mockFiles.get(from);
+    if (value == null) throw new Error(`missing source: ${from}`);
+    mockFiles.set(to, value);
+    mockFiles.delete(from);
   }),
 }));
 
@@ -66,15 +75,15 @@ async function seed(db: import('../db/dao').GarmentDb) {
   });
 }
 
-describe('镜像 v8', () => {
-  it('writeMirror 写 version 8 且包含 looks/lookItems/plans/trips/tripOutfits/packingItems/tripTemplates', async () => {
+describe('镜像 v9', () => {
+  it('writeMirror 写 version 9 且包含既有领域与 shoppingCandidates', async () => {
     mockFiles.clear();
     const a = await openTestDb();
     await seed(a.db);
     await writeMirror(ROOT, a.db, drizzleAsExpo(a), 5_000);
 
     const raw = JSON.parse(mockFiles.get(MIRROR_PATH)!) as Record<string, unknown>;
-    expect(raw.version).toBe(8);
+    expect(raw.version).toBe(9);
     expect(Array.isArray(raw.looks)).toBe(true);
     expect((raw.looks as unknown[]).length).toBe(1);
     expect((raw.lookItems as unknown[]).length).toBe(1);
@@ -84,7 +93,49 @@ describe('镜像 v8', () => {
     expect(Array.isArray(raw.tripOutfits)).toBe(true);
     expect(Array.isArray(raw.packingItems)).toBe(true);
     expect(Array.isArray(raw.tripTemplates)).toBe(true);
+    expect(Array.isArray(raw.shoppingCandidates)).toBe(true);
+    expect(mockFiles.has(`${MIRROR_PATH}.tmp`)).toBe(false);
+    expect(mockFiles.has(`${MIRROR_PATH}.bak`)).toBe(false);
     a.close();
+  });
+
+  it('主镜像损坏时回退读取上一次原子备份，不采用未提交 tmp', async () => {
+    mockFiles.clear();
+    const backup = {
+      version: 9,
+      updatedAt: 4_000,
+      garments: [], assets: [], tags: [], statusEvents: [], looks: [], lookItems: [], plans: [],
+      trips: [], tripOutfits: [], packingItems: [], tripTemplates: [], cutoutJobs: [], maskStrokes: [],
+      recommendations: [], recommendationItems: [], reasonCodes: [], wearLogs: [], wearLogItems: [],
+      feedbackEvents: [], weatherCache: [], shoppingCandidates: [],
+    };
+    mockFiles.set(MIRROR_PATH, '{broken');
+    mockFiles.set(`${MIRROR_PATH}.tmp`, JSON.stringify({ ...backup, updatedAt: 9_999 }));
+    mockFiles.set(`${MIRROR_PATH}.bak`, JSON.stringify(backup));
+    expect((await readMirror(ROOT))?.updatedAt).toBe(4_000);
+  });
+
+  it('shopping candidate 随 v9 镜像恢复，且不依赖 garments 外键', async () => {
+    mockFiles.clear();
+    const a = await openTestDb();
+    await seed(a.db);
+    const row: schema.ShoppingCandidateRow = {
+      id: 'shop-1', name: '候选衬衫', category: 'top', priceMinor: 69900, currency: 'CNY',
+      productUrl: 'https://example.com/item', imageRelPath: 'shopping/shop-1.jpg', imageSha256: 'sha',
+      algorithmVersion: 'shopping-image-v1', featuresJson: null, resultsJson: '[]', compatibilityJson: '[]',
+      assumedWears: 30, verdict: 'considering', analysisState: 'insufficient_evidence', lastError: null,
+      createdAt: 2_000, updatedAt: 2_000, deletedAt: null,
+    };
+    await drizzleAsExpo(a).insert(schema.shoppingCandidates).values(row).run();
+    await writeMirror(ROOT, a.db, drizzleAsExpo(a), 9_000);
+    a.close();
+
+    const b = await openTestDb();
+    expect(await restoreFromMirrorIfNeeded(ROOT, b.db, drizzleAsExpo(b))).toBe(true);
+    const restored = (await drizzleAsExpo(b).select().from(schema.shoppingCandidates).all()) as schema.ShoppingCandidateRow[];
+    expect(restored).toEqual([row]);
+    expect((await dumpAll(b.db)).garments.map((garment) => garment.id)).toEqual(['g1']);
+    b.close();
   });
 
   it('新库从镜像回灌：造型与衣物完整恢复，reopenDb 后一致', async () => {
@@ -157,7 +208,7 @@ describe('镜像 v8', () => {
     // 同一 DB：data_updated_at 已为 3_000，不新不旧 → 不回灌
     expect(await restoreFromMirrorIfNeeded(ROOT, a.db, drizzleAsExpo(a))).toBe(false);
     const m = await readMirror(ROOT);
-    expect(m?.version).toBe(8);
+    expect(m?.version).toBe(9);
     a.close();
   });
 });

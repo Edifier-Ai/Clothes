@@ -35,5 +35,10 @@ Thumbs.db
 # Test & coverage artifacts
 coverage/
 
+# Local Android delivery packages and device backup images (not source artifacts)
+*.apk
+*.apk.idsig
+scripts/evidence/MVP-014/device-backup/clothes-images.tar
+
 # Segmentation benchmark private samples/results (not committed; reproducible)
 scripts/segmentation-benchmark/.private/

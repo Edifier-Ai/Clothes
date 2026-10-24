@@ -6,7 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { palette } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
-import { loadOnboardState } from '@/core/onboarding';
+import { loadOnboardState, subscribeOnboardState } from '@/core/onboarding';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
   /* preventAutoHideAsync 在原生已隐藏时 reject，忽略 */
@@ -26,6 +26,9 @@ export default function RootLayout() {
 
   useEffect(() => {
     let mounted = true;
+    const unsubscribe = subscribeOnboardState((state) => {
+      if (mounted) setCompleted(state.completed);
+    });
     (async () => {
       try {
         const app = await openAppDb();
@@ -39,6 +42,7 @@ export default function RootLayout() {
     })();
     return () => {
       mounted = false;
+      unsubscribe();
     };
   }, []);
 
@@ -71,6 +75,10 @@ export default function RootLayout() {
         <Stack.Screen name="look-from-garment" options={{ headerShown: true, title: '由此创建造型' }} />
         <Stack.Screen name="plan/[date]" options={{ headerShown: true, title: '计划' }} />
         <Stack.Screen name="plan-edit" options={{ headerShown: true, title: '添加计划' }} />
+        <Stack.Screen name="settings/index" />
+        <Stack.Screen name="settings/privacy" />
+        <Stack.Screen name="settings/recommendations" />
+        <Stack.Screen name="settings/demo" />
         <Stack.Screen name="trips" options={{ headerShown: true, title: '旅行' }} />
         <Stack.Screen name="trip-edit" options={{ headerShown: true, title: '旅行' }} />
         <Stack.Screen name="trip/[id]" options={{ headerShown: true, title: '旅行总览' }} />

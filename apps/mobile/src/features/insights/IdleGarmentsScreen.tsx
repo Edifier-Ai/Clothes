@@ -47,7 +47,7 @@ export default function IdleGarmentsScreen() {
         key={gid}
         accessibilityRole="button"
         accessibilityLabel={`为 ${g?.name ?? gid} 搭一套`}
-        onPress={() => router.push({ pathname: '/look-from-garment', params: { garmentId: gid } })}
+        onPress={() => router.push({ pathname: '/look-from-garment', params: { hero: gid } })}
         style={styles.idleCard}
       >
         <View style={styles.idleRow}>

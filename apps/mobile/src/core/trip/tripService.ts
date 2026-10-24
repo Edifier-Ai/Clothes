@@ -1,6 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
-
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import {
   createTrip,
   createTripOutfit,
@@ -18,7 +16,6 @@ import {
 } from '../db/dao';
 import type { TripOutfitRow, TripRow, TripStatus } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
-import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 
 /**
  * 旅行服务（MVP-010）。结构仿 planService：
@@ -230,87 +227,54 @@ export async function recordTripOutfitWornCore(
 
 /* ---------------- 设备单例 ---------------- */
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-async function persist(): Promise<void> {
-  const app = await db();
-  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 export async function saveTrip(input: SaveTripInput): Promise<TripDetail> {
-  const detail = await saveTripCore((await readyDb()).db, input);
-  await persist();
+  const detail = await saveTripCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return detail;
 }
 
 export async function getTrip(id: string): Promise<TripDetail | null> {
-  return getTripCore((await readyDb()).db, id);
+  return getTripCore((await rt.readyDb()).db, id);
 }
 
 export async function listActiveTrips(): Promise<TripDetail[]> {
-  return listActiveTripsCore((await readyDb()).db);
+  return listActiveTripsCore((await rt.readyDb()).db);
 }
 
 export async function deleteTrip(id: string): Promise<void> {
-  await deleteTripCore((await readyDb()).db, id);
-  await persist();
+  await deleteTripCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 export async function updateTripStatus(id: string, status: TripStatus): Promise<void> {
-  await updateTripStatusCore((await readyDb()).db, id, status);
-  await persist();
+  await updateTripStatusCore((await rt.readyDb()).db, id, status);
+  await rt.persist();
 }
 
 export async function saveTripOutfit(input: SaveTripOutfitInput): Promise<TripOutfitDetail> {
-  const detail = await saveTripOutfitCore((await readyDb()).db, input);
-  await persist();
+  const detail = await saveTripOutfitCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return detail;
 }
 
 export async function listTripOutfits(tripId: string): Promise<TripOutfitDetail[]> {
-  return listTripOutfitsCore((await readyDb()).db, tripId);
+  return listTripOutfitsCore((await rt.readyDb()).db, tripId);
 }
 
 export async function deleteTripOutfit(id: string): Promise<void> {
-  await deleteTripOutfitCore((await readyDb()).db, id);
-  await persist();
+  await deleteTripOutfitCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 export async function recordTripOutfitWorn(id: string, input: RecordTripOutfitWornInput): Promise<TripOutfitDetail> {
-  const detail = await recordTripOutfitWornCore((await readyDb()).db, id, input);
-  await persist();
+  const detail = await recordTripOutfitWornCore((await rt.readyDb()).db, id, input);
+  await rt.persist();
   return detail;
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
+  rt.resetForTest();
 }

@@ -23,9 +23,20 @@ const mockGetSnapshot = jest.fn(async () => SNAP_ZERO);
 const mockCountNetworkPending = jest.fn(async () => 0);
 const mockStartProcessing = jest.fn(async () => 0);
 const mockRetryFailed = jest.fn(async () => 0);
+const mockListAll = jest.fn(async (..._args: unknown[]) => []);
+const mockCancel = jest.fn(async (..._args: unknown[]) => undefined);
+const mockRouterPush = jest.fn((..._args: unknown[]) => undefined);
+const mockRequestCameraPermission = jest.fn(async (..._args: unknown[]) => ({ granted: true }));
+const mockLaunchCamera = jest.fn(async (..._args: unknown[]) => ({ canceled: true, assets: null }));
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: (...args: unknown[]) => mockRouterPush(...args) }),
+}));
 
 jest.mock('expo-image-picker', () => ({
   launchImageLibraryAsync: jest.fn(async () => ({ canceled: true, assets: null })),
+  requestCameraPermissionsAsync: (...args: unknown[]) => mockRequestCameraPermission(...args),
+  launchCameraAsync: (...args: unknown[]) => mockLaunchCamera(...args),
 }));
 
 jest.mock('@/core/cutout/cutoutService', () => ({
@@ -37,10 +48,21 @@ jest.mock('@/core/cutout/cutoutService', () => ({
   countNetworkPending: () => mockCountNetworkPending(),
   startProcessing: () => mockStartProcessing(),
   retryFailed: () => mockRetryFailed(),
+  rootAbs: () => '/documents/clothes',
 }));
 
 jest.mock('@/core/db/expoDb', () => ({
-  openAppDb: jest.fn(async () => ({})),
+  openAppDb: jest.fn(async () => ({ db: {}, drizzleDb: {} })),
+}));
+
+jest.mock('@/core/db/queue', () => ({
+  listAll: (...args: unknown[]) => mockListAll(...args),
+  cancel: (...args: unknown[]) => mockCancel(...args),
+  clearSourceStaged: jest.fn(async () => undefined),
+}));
+
+jest.mock('@/core/garments/mirror', () => ({
+  writeMirror: jest.fn(async () => undefined),
 }));
 
 const CONFIG = {
@@ -59,6 +81,9 @@ beforeEach(() => {
   launchPicker.mockResolvedValue({ canceled: true, assets: null });
   mockGetSnapshot.mockResolvedValue(SNAP_ZERO);
   mockCountNetworkPending.mockResolvedValue(0);
+  mockListAll.mockResolvedValue([]);
+  mockRequestCameraPermission.mockResolvedValue({ granted: true });
+  mockLaunchCamera.mockResolvedValue({ canceled: true, assets: null });
 });
 
 async function renderLoaded() {
@@ -97,7 +122,8 @@ describe('batch-import：未配置抠图服务', () => {
     await waitFor(() => expect(screen.getByText('上传告知')).toBeOnTheScreen());
     expect(JSON.parse(store.get('tencent-ci-config')!)).toEqual(CONFIG);
     expect(screen.getByText(/上传至腾讯云数据万象/)).toBeOnTheScreen();
-    expect(screen.getByText(/处理后即删除云端文件/)).toBeOnTheScreen();
+    expect(screen.getAllByText(/App 在处理完成后请求删除 COS 暂存对象/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/云服务处理受腾讯条款约束/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: '同意并继续' })).toBeOnTheScreen();
   });
 
@@ -105,6 +131,14 @@ describe('batch-import：未配置抠图服务', () => {
     mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 2, total: 2 });
     await renderLoaded();
     await waitFor(() => expect(screen.getByText(/待配置/)).toBeOnTheScreen());
+  });
+
+  it('首屏不请求相机权限，只有用户点击拍摄后才请求', async () => {
+    await renderLoaded();
+    expect(mockRequestCameraPermission).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: '拍一件' }));
+    await waitFor(() => expect(mockRequestCameraPermission).toHaveBeenCalledTimes(1));
+    expect(mockLaunchCamera).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -203,7 +237,7 @@ describe('batch-import：已配置已同意', () => {
   it('队列全部完成（无 pending/running）时不自动续跑', async () => {
     mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, succeeded: 12, total: 12 });
     await renderLoaded();
-    await waitFor(() => expect(screen.getByText(/成功 succeeded: 12/)).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText(/待审核 12/)).toBeOnTheScreen());
     expect(mockStartProcessing).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '继续处理' })).toBeNull();
   });

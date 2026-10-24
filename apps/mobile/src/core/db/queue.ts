@@ -3,7 +3,14 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
 
 import * as schema from './schema';
-import { cutoutJobs, maskStrokes, type CutoutJobRow, type MaskStrokeRow } from './schema';
+import {
+  cutoutJobs,
+  garmentAssets,
+  garments,
+  maskStrokes,
+  type CutoutJobRow,
+  type MaskStrokeRow,
+} from './schema';
 
 /**
  * 抠图队列 + 修边操作栈（MVP-003）。直接基于 drizzle 实例，状态机：
@@ -31,6 +38,16 @@ export interface SucceededData {
   thumbnailRelPath: string;
   width: number;
   height: number;
+}
+
+/**
+ * 队列页的一行可展示数据。job 仍是事实状态；名称和原图仅用于预览，
+ * 不把绝对文件路径或 UI 文案写回数据库。
+ */
+export interface CutoutQueueItem {
+  job: CutoutJobRow;
+  garmentName: string;
+  originalRelPath: string | null;
 }
 
 export async function enqueue(db: AnyDb, input: EnqueueInput): Promise<{ id: string; deduped: boolean }> {
@@ -167,6 +184,22 @@ export async function listByGarment(db: AnyDb, garmentId: string): Promise<Cutou
   return (await db.select().from(cutoutJobs).where(eq(cutoutJobs.garmentId, garmentId)).all()) as CutoutJobRow[];
 }
 
+/** 按入队时间列出全部任务，并带上真实衣物名称与只读原图路径。 */
+export async function listAll(db: AnyDb): Promise<CutoutQueueItem[]> {
+  const jobs = (await db.select().from(cutoutJobs).orderBy(asc(cutoutJobs.createdAt)).all()) as CutoutJobRow[];
+  const result: CutoutQueueItem[] = [];
+  for (const job of jobs) {
+    const garment = await db.select().from(garments).where(eq(garments.id, job.garmentId)).get();
+    const asset = await db.select().from(garmentAssets).where(eq(garmentAssets.garmentId, job.garmentId)).get();
+    result.push({
+      job,
+      garmentName: garment?.name ?? '未命名衣物',
+      originalRelPath: asset?.originalRelPath ?? null,
+    });
+  }
+  return result;
+}
+
 export async function clearSourceStaged(db: AnyDb, id: string, now: number): Promise<void> {
   await db.update(cutoutJobs).set({ sourceStagedPath: null, updatedAt: now }).where(eq(cutoutJobs.id, id));
 }
@@ -187,6 +220,15 @@ export async function listStrokes(db: AnyDb, garmentId: string): Promise<MaskStr
 }
 
 export async function popLastStroke(db: AnyDb, garmentId: string): Promise<number | null> {
+  const row = await removeLastStrokeRow(db, garmentId);
+  return row?.ord ?? null;
+}
+
+/**
+ * 删除并返回最后一笔。编辑器用完整行实现真正的重做；保留 popLastStroke 的
+ * number 返回值，避免破坏既有调用。
+ */
+export async function removeLastStrokeRow(db: AnyDb, garmentId: string): Promise<MaskStrokeRow | null> {
   const rows = (await db
     .select()
     .from(maskStrokes)
@@ -196,7 +238,7 @@ export async function popLastStroke(db: AnyDb, garmentId: string): Promise<numbe
   if (rows.length === 0) return null;
   const last = rows[rows.length - 1];
   await db.delete(maskStrokes).where(eq(maskStrokes.id, last.id));
-  return last.ord;
+  return last;
 }
 
 export async function nextOrd(db: AnyDb, garmentId: string): Promise<number> {

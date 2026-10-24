@@ -506,6 +506,51 @@ export type PackingItemRow = typeof packingItems.$inferSelect;
 export type PackingItemKind = 'garment' | 'manual';
 export type TripTemplateRow = typeof tripTemplates.$inferSelect;
 
+/**
+ * 买前决策候选（MVP-012）。
+ *
+ * 该表刻意不引用 garments/garment_assets：候选只是尚未购买的独立草稿，删除候选
+ * 绝不能级联影响真实衣橱。图片位于 `shopping/`，与衣橱 originals/derivatives 隔离。
+ * features/results/compatibility 均为带版本的分析快照；即使算法升级，旧结论仍可解释，
+ * 用户主动重算才会覆盖。删除采用墓碑。
+ */
+export const shoppingCandidates = sqliteTable(
+  'shopping_candidates',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    category: text('category').notNull(),
+    priceMinor: integer('price_minor'),
+    currency: text('currency'),
+    /** 仅保存通过 http/https + 无凭证/控制字符校验的 URL。 */
+    productUrl: text('product_url'),
+    /** App 私有目录内相对路径，如 shopping/<candidate>.jpg。 */
+    imageRelPath: text('image_rel_path'),
+    imageSha256: text('image_sha256'),
+    algorithmVersion: text('algorithm_version').notNull(),
+    /** JSON: versioned ImageFeatures。无图/读取失败时为 NULL。 */
+    featuresJson: text('features_json'),
+    /** JSON: versioned ShoppingSimilarityResult[]，只含同类真实衣物。 */
+    resultsJson: text('results_json').notNull().default('[]'),
+    /** JSON: versioned ShoppingCompatibleLook[]，仅引用真实衣物 id。 */
+    compatibilityJson: text('compatibility_json').notNull().default('[]'),
+    assumedWears: integer('assumed_wears').notNull().default(30),
+    /** undecided | similar_owned | fills_gap | considering。 */
+    verdict: text('verdict').notNull().default('undecided'),
+    /** pending | ready | insufficient_evidence | failed。 */
+    analysisState: text('analysis_state').notNull().default('pending'),
+    lastError: text('last_error'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => ({
+    activeIdx: index('shopping_candidates_active_idx').on(t.deletedAt, t.updatedAt),
+  }),
+);
+
+export type ShoppingCandidateRow = typeof shoppingCandidates.$inferSelect;
+
 /** 旅行天气快照结构（存 trips.weather_snapshot_json）。 */
 export interface TripWeatherSnapshot {
   fetchedAt: number;

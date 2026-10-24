@@ -5,6 +5,11 @@ import {
   type RecContext,
   type RecResult,
 } from './index';
+import { colorsClash } from './colorRules';
+import {
+  resolveRecommendationFactors,
+  type RecommendationFactorOverrides,
+} from './factors';
 
 export type OutfitSlot = 'top' | 'bottom' | 'shoes' | 'outerwear';
 export type RecommendationMode = 'safe' | 'fresh' | 'hero' | 'hurry';
@@ -12,6 +17,7 @@ export type RecommendationMode = 'safe' | 'fresh' | 'hero' | 'hurry';
 export interface ReplacementOptions {
   mode: RecommendationMode;
   feedbackWeights?: ReadonlyMap<string, number>;
+  factors?: RecommendationFactorOverrides;
 }
 
 export interface RegenerateOptions extends ReplacementOptions {
@@ -31,8 +37,13 @@ function modeScore(
   mode: RecommendationMode,
   feedbackWeights?: ReadonlyMap<string, number>,
 ): number {
-  const feedback = (feedbackWeights?.get(item.id) ?? 0) * 1_000;
-  const staleDays = item.lastWornAt == null ? 90 : Math.max(0, (ctx.now - item.lastWornAt) / DAY_MS);
+  const factors = resolveRecommendationFactors(ctx.factors);
+  const feedback = factors.feedbackLearning ? (feedbackWeights?.get(item.id) ?? 0) * 1_000 : 0;
+  const staleDays = factors.wardrobeActivation
+    ? item.lastWornAt == null
+      ? 90
+      : Math.max(0, (ctx.now - item.lastWornAt) / DAY_MS)
+    : 0;
   if (mode === 'safe') return feedback + item.timesWorn * 30 - staleDays;
   if (mode === 'fresh' || mode === 'hero') return feedback + staleDays * 10 - item.timesWorn * 30;
   return feedback - item.timesWorn;
@@ -69,10 +80,9 @@ export function listReplacementCandidates(
     (item) =>
       item.id !== current.id &&
       item.category === expectedCategory &&
-      isAvailable(item) &&
-      !(slot === 'outerwear' && ctx.weatherTempC != null && ctx.weatherTempC >= 26),
+      isAvailable(item),
   );
-  return sortCandidates(candidates, ctx, options);
+  return sortCandidates(candidates, { ...ctx, factors: options.factors ?? ctx.factors }, options);
 }
 
 export function replaceSlot(outfit: Outfit, slot: OutfitSlot, candidate: GarmentForRec): Outfit {
@@ -112,13 +122,7 @@ function buildOutfits(items: readonly GarmentForRec[], ctx: RecContext): Outfit[
   const dresses = pool.filter((item) => item.category === 'dress');
   const shoes = pool.filter((item) => item.category === 'shoes');
   const outerwear = pool.filter((item) => item.category === 'outerwear');
-  const cold = ctx.weatherTempC != null && ctx.weatherTempC <= 18;
-  const hot = ctx.weatherTempC != null && ctx.weatherTempC >= 26;
-  const outerOptions: (GarmentForRec | undefined)[] = hot
-    ? [undefined]
-    : cold && outerwear.length > 0
-      ? outerwear
-      : [undefined, ...outerwear];
+  const outerOptions: (GarmentForRec | undefined)[] = [undefined, ...outerwear];
   const outfits: Outfit[] = [];
 
   for (const top of tops) {
@@ -145,12 +149,18 @@ function outfitScore(
   ctx: RecContext,
   options: RegenerateOptions,
 ): number {
+  const mergedContext = { ...ctx, factors: options.factors ?? ctx.factors };
+  const factors = resolveRecommendationFactors(mergedContext.factors);
   const itemScore = uniqueItems(outfit).reduce(
-    (sum, item) => sum + modeScore(item, ctx, options.mode, options.feedbackWeights),
+    (sum, item) => sum + modeScore(item, mergedContext, options.mode, options.feedbackWeights),
     0,
   );
   const hurryPenalty = options.mode === 'hurry' && outfit.outerwear ? 25 : 0;
-  return itemScore - hurryPenalty;
+  const colorPenalty =
+    factors.colorHarmony && outfit.top.id !== outfit.bottom.id && colorsClash(outfit.top.color, outfit.bottom.color)
+      ? 100_000
+      : 0;
+  return itemScore - hurryPenalty - colorPenalty;
 }
 
 export function regenerateOutfit(
@@ -158,10 +168,13 @@ export function regenerateOutfit(
   ctx: RecContext,
   options: RegenerateOptions,
 ): RecResult {
+  const mergedContext = { ...ctx, factors: options.factors ?? ctx.factors };
+  const factors = resolveRecommendationFactors(mergedContext.factors);
+  const activeLockedHeroId = factors.heroItem ? options.lockedHeroId : null;
   let outfits = buildOutfits(items, ctx);
-  if (options.lockedHeroId) {
+  if (activeLockedHeroId) {
     outfits = outfits.filter((outfit) =>
-      uniqueItems(outfit).some((item) => item.id === options.lockedHeroId),
+      uniqueItems(outfit).some((item) => item.id === activeLockedHeroId),
     );
   }
   if (outfits.length === 0) {
@@ -170,32 +183,28 @@ export function regenerateOutfit(
     if (!available.some((item) => item.category === 'top' || item.category === 'dress')) missing.push('top');
     if (!available.some((item) => item.category === 'bottom' || item.category === 'dress')) missing.push('bottom');
     if (!available.some((item) => item.category === 'shoes')) missing.push('shoes');
-    if (options.lockedHeroId) missing.push('locked-hero');
+    if (activeLockedHeroId) missing.push('locked-hero');
     return { ok: false, missing };
   }
 
-  const avoided = new Set(options.avoidSignatures);
+  const avoided = new Set(factors.repeatAvoidance ? options.avoidSignatures : []);
   const fresh = outfits.filter((outfit) => !avoided.has(outfitSignature(outfit)));
   const candidates = fresh.length > 0 ? fresh : outfits;
   candidates.sort((a, b) => {
-    const scoreDiff = outfitScore(b, ctx, options) - outfitScore(a, ctx, options);
+    const scoreDiff = outfitScore(b, mergedContext, options) - outfitScore(a, mergedContext, options);
     return scoreDiff || outfitSignature(a).localeCompare(outfitSignature(b));
   });
   const outfit = candidates[0];
   const reasonCodes = [
     `MODE_${options.mode.toUpperCase()}`,
-    ...(ctx.occasion ? [`OCCASION_${ctx.occasion.toUpperCase()}`] : []),
-    ...(ctx.weatherTempC != null && ctx.weatherTempC >= 26 ? ['WEATHER_HOT_NO_OUTER'] : []),
-    ...(ctx.weatherTempC != null && ctx.weatherTempC <= 18 && outfit.outerwear
-      ? ['WEATHER_COLD_OUTER']
-      : []),
+    ...(factors.occasion && ctx.occasion ? [`OCCASION_${ctx.occasion.toUpperCase()}`] : []),
     ...(fresh.length > 0 && avoided.size > 0 ? ['REPEAT_SUPPRESSION'] : []),
-    ...(options.lockedHeroId ? ['HERO_LOCKED'] : []),
+    ...(activeLockedHeroId ? ['HERO_LOCKED'] : []),
   ];
   return {
     ok: true,
     outfit,
     reasonCodes,
-    totalScore: outfitScore(outfit, ctx, options),
+    totalScore: outfitScore(outfit, mergedContext, options),
   };
 }

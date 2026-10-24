@@ -12,10 +12,12 @@ const mockReadPixels = jest.fn();
 const mockEncodeToBytes = jest.fn(() => new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 const mockMakeImageFromEncoded = jest.fn();
 const mockMakeImage = jest.fn();
+const mockDataDispose = jest.fn();
+const mockImageDispose = jest.fn();
 
 jest.mock('@shopify/react-native-skia', () => ({
   Skia: {
-    Data: { fromBytes: (bytes: Uint8Array) => ({ __data: bytes }) },
+    Data: { fromBytes: (bytes: Uint8Array) => ({ __data: bytes, dispose: mockDataDispose }) },
     Image: {
       MakeImageFromEncoded: (data: unknown) => mockMakeImageFromEncoded(data),
       MakeImage: (info: unknown, data: unknown, bytesPerRow: number) => mockMakeImage(info, data, bytesPerRow),
@@ -26,6 +28,7 @@ jest.mock('@shopify/react-native-skia', () => ({
   ImageFormat: { PNG: 4 },
 }));
 
+// eslint-disable-next-line import/first
 import { decodePng, decodeSkImage, encodeAlphaPng, encodePng } from './skiaPngCodec';
 
 beforeEach(() => {
@@ -33,6 +36,8 @@ beforeEach(() => {
   mockEncodeToBytes.mockClear();
   mockMakeImageFromEncoded.mockReset();
   mockMakeImage.mockReset();
+  mockDataDispose.mockClear();
+  mockImageDispose.mockClear();
 });
 
 describe('decodePng', () => {
@@ -42,6 +47,7 @@ describe('decodePng', () => {
       width: () => 1,
       height: () => 1,
       readPixels: mockReadPixels,
+      dispose: mockImageDispose,
     });
     mockReadPixels.mockReturnValue(rgba);
 
@@ -56,29 +62,36 @@ describe('decodePng', () => {
     expect(out.w).toBe(1);
     expect(out.h).toBe(1);
     expect(Array.from(out.rgba)).toEqual([1, 2, 3, 255]);
+    expect(mockImageDispose).toHaveBeenCalledTimes(1);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
   });
 
   it('编码数据无法识别时抛错', () => {
     mockMakeImageFromEncoded.mockReturnValue(null);
     expect(() => decodePng(new Uint8Array([0, 1]))).toThrow(/decode/i);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
   });
 
   it('readPixels 失败时抛错', () => {
-    mockMakeImageFromEncoded.mockReturnValue({ width: () => 2, height: () => 2, readPixels: mockReadPixels });
+    mockMakeImageFromEncoded.mockReturnValue({ width: () => 2, height: () => 2, readPixels: mockReadPixels, dispose: mockImageDispose });
     mockReadPixels.mockReturnValue(null);
     expect(() => decodePng(new Uint8Array([0x89]))).toThrow(/readPixels/i);
+    expect(mockImageDispose).toHaveBeenCalledTimes(1);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('encodePng', () => {
   it('bytesPerRow = w*4 且输出 ImageFormat.PNG', () => {
-    mockMakeImage.mockReturnValue({ encodeToBytes: mockEncodeToBytes });
+    mockMakeImage.mockReturnValue({ encodeToBytes: mockEncodeToBytes, dispose: mockImageDispose });
     const out = encodePng(new Uint8Array(2 * 3 * 4).fill(7), 2, 3);
     const call = mockMakeImage.mock.calls[0] as unknown as [{ width: number; height: number; colorType: number; alphaType: number }, unknown, number];
     expect(call[0]).toEqual({ width: 2, height: 3, colorType: 4, alphaType: 2 });
     expect(call[2]).toBe(2 * 4);
     expect(mockEncodeToBytes).toHaveBeenCalledWith(4);
     expect(out[0]).toBe(0x89);
+    expect(mockImageDispose).toHaveBeenCalledTimes(1);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
   });
 
   it('rgba 长度与 w*h*4 不符时抛错，不调用 Skia', () => {
@@ -97,7 +110,7 @@ describe('encodeAlphaPng', () => {
     let captured: Uint8Array | null = null;
     mockMakeImage.mockImplementation((...args: unknown[]) => {
       captured = (args[1] as { __data: Uint8Array }).__data;
-      return { encodeToBytes: mockEncodeToBytes };
+      return { encodeToBytes: mockEncodeToBytes, dispose: mockImageDispose };
     });
     encodeAlphaPng(new Uint8Array([9, 0, 128, 255]), 2, 2);
     expect(captured).not.toBeNull();
@@ -112,14 +125,17 @@ describe('encodeAlphaPng', () => {
 
 describe('decodeSkImage（画布原图：JSI 解码，替代 file:// useImage）', () => {
   it('成功返回 SkImage，不解码像素', () => {
-    const img = { width: () => 4, height: () => 4 };
+    const img = { width: () => 4, height: () => 4, dispose: mockImageDispose };
     mockMakeImageFromEncoded.mockReturnValue(img);
     expect(decodeSkImage(new Uint8Array([0x89, 0x50]))).toBe(img);
     expect(mockMakeImageFromEncoded).toHaveBeenCalledTimes(1);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
+    expect(mockImageDispose).not.toHaveBeenCalled();
   });
 
   it('编码数据无法识别时抛错', () => {
     mockMakeImageFromEncoded.mockReturnValue(null);
     expect(() => decodeSkImage(new Uint8Array([0, 1]))).toThrow(/decode/i);
+    expect(mockDataDispose).toHaveBeenCalledTimes(1);
   });
 });

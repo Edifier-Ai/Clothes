@@ -19,13 +19,11 @@
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
-import * as FileSystem from 'expo-file-system/legacy';
 
 import * as schema from '../db/schema';
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import type { GarmentDb } from '../db/dao';
 import { listActiveGarmentsWithThumbs } from '../garments/service';
-import { restoreFromMirrorIfNeeded } from '../garments/mirror';
 import { listWearLogs } from '../recommend/wearLog';
 import type { GarmentRow } from '../db/schema';
 
@@ -170,34 +168,7 @@ export async function getMonthlyReportCore(
 
 /* ---------------- 设备单例（只读，不写镜像）---------------- */
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 /** 衣物名 + 缩略图（用于洞察列表展示）；不依赖穿过的衣物，归档也包括。 */
 export async function listGarmentThumbs(): Promise<Map<string, string | null>> {
@@ -206,28 +177,26 @@ export async function listGarmentThumbs(): Promise<Map<string, string | null>> {
 }
 
 export async function getOverview(now: number): Promise<OverviewView> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   return getOverviewCore(app.db, app.drizzleDb, now);
 }
 
 export async function getIdleReport(now: number): Promise<IdleView> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   return getIdleReportCore(app.db, app.drizzleDb, now);
 }
 
 export async function getCostPerWearList(): Promise<CostPerWearView> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   return getCostPerWearListCore(app.db, app.drizzleDb);
 }
 
 export async function getMonthlyReport(yearMonth: string, now: number): Promise<MonthlyView> {
-  const app = await readyDb();
+  const app = await rt.readyDb();
   return getMonthlyReportCore(app.db, app.drizzleDb, yearMonth, now);
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
-  restored = null;
+  rt.resetForTest();
 }

@@ -1,6 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
-
-import { openAppDb, type AppDb } from '../db/expoDb';
+import { createServiceRuntime } from '../db/serviceRuntime';
 import {
   createPlan,
   getLookWithItems,
@@ -12,7 +10,6 @@ import {
 } from '../db/dao';
 import type { PlanRow } from '../db/schema';
 import { uuidv7 } from '../id/uuidv7';
-import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 
 /**
  * 计划服务（MVP-009）。结构仿 lookService：
@@ -155,76 +152,43 @@ export async function recordWornCore(db: GarmentDb, id: string, input: RecordWor
 
 /* ---------------- 设备单例 ---------------- */
 
-let dbHolder: Promise<AppDb> | null = null;
-let rootAbs: string | null = null;
-let restored: Promise<void> | null = null;
-
-function db(): Promise<AppDb> {
-  if (!dbHolder) {
-    const opened = openAppDb();
-    restored = opened
-      .then((app) => restoreFromMirrorIfNeeded(root(), app.db, app.drizzleDb))
-      .then(() => undefined);
-    dbHolder = opened;
-  }
-  return dbHolder;
-}
-
-async function readyDb(): Promise<AppDb> {
-  const app = await db();
-  if (restored) await restored;
-  return app;
-}
-
-async function persist(): Promise<void> {
-  const app = await db();
-  await writeMirror(root(), app.db, app.drizzleDb, Date.now());
-}
-
-function root(): string {
-  if (!rootAbs) {
-    const base = FileSystem.documentDirectory?.replace(/\/$/, '') ?? '/tmp';
-    rootAbs = `${base}/clothes`;
-  }
-  return rootAbs;
-}
+const rt = createServiceRuntime();
 
 export async function savePlan(input: SavePlanInput): Promise<PlanDetail> {
-  const detail = await savePlanCore((await readyDb()).db, input);
-  await persist();
+  const detail = await savePlanCore((await rt.readyDb()).db, input);
+  await rt.persist();
   return detail;
 }
 
 export async function getPlan(id: string): Promise<PlanDetail | null> {
-  return getPlanCore((await readyDb()).db, id);
+  return getPlanCore((await rt.readyDb()).db, id);
 }
 
 export async function plansForDate(date: string): Promise<PlanRow[]> {
-  return plansForDateCore((await readyDb()).db, date);
+  return plansForDateCore((await rt.readyDb()).db, date);
 }
 
 export async function listPlansInRange(start: string, end: string): Promise<PlanRow[]> {
-  return listPlansInRangeCore((await readyDb()).db, start, end);
+  return listPlansInRangeCore((await rt.readyDb()).db, start, end);
 }
 
 export async function movePlan(id: string, newDate: string): Promise<void> {
-  await movePlanCore((await readyDb()).db, id, newDate);
-  await persist();
+  await movePlanCore((await rt.readyDb()).db, id, newDate);
+  await rt.persist();
 }
 
 export async function deletePlan(id: string): Promise<void> {
-  await deletePlanCore((await readyDb()).db, id);
-  await persist();
+  await deletePlanCore((await rt.readyDb()).db, id);
+  await rt.persist();
 }
 
 export async function recordWorn(id: string, input: RecordWornInput): Promise<PlanDetail> {
-  const detail = await recordWornCore((await readyDb()).db, id, input);
-  await persist();
+  const detail = await recordWornCore((await rt.readyDb()).db, id, input);
+  await rt.persist();
   return detail;
 }
 
 /** 仅测试/调试：重置单例（不删数据）。 */
 export function __resetForTest() {
-  dbHolder = null;
-  rootAbs = null;
+  rt.resetForTest();
 }

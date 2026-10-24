@@ -152,13 +152,6 @@ export default function TripOverviewScreen({ id }: TripOverviewScreenProps) {
             <Text style={styles.statusShiftLabel}>推进状态 →</Text>
           </Pressable>
         </View>
-        {trip.weatherSnapshot ? (
-          <Text style={styles.weatherText}>
-            天气：{trip.weatherSnapshot.cityName} {trip.weatherSnapshot.minTempC}–{trip.weatherSnapshot.maxTempC}°C
-          </Text>
-        ) : (
-          <Text style={styles.weatherText}>天气：暂未获取，不阻塞旅行</Text>
-        )}
       </View>
 
       <View style={styles.actionRow}>
@@ -296,7 +289,6 @@ const styles = StyleSheet.create({
   },
   statusShiftBtn: { minHeight: hitTarget.min, justifyContent: 'center' },
   statusShiftLabel: { ...typography.caption, color: palette.oxblood },
-  weatherText: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.xs },
   actionRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   primaryBtn: {
     flex: 1,

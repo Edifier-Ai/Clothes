@@ -1,15 +1,16 @@
 # Clothes 长期执行状态
 
-最后更新：2026-08-02
-当前阶段：P0 全部完成
-当前任务：无（MVP-014 ACCEPTED，P0 收官）
-状态：MVP-014 ACCEPTED（Android P0 发布卡：Release APK v0.1.0 签名构建 + 真机安装闭环 + 飞行模式断网 + 升级迁移 + 反向验证 ROLLBACK + 模拟器响应矩阵 + 64 suites/483 tests/0 failed；见 `scripts/evidence/MVP-014/INDEX.md`）；MVP-002 待真图终判（B-8②，需用户 100–200 张目标场景照片）
+最后更新：2026-08-28
+当前阶段：Android 可录屏 Demo 收口
+当前任务：DEMO-001（READY_FOR_RECORDING）
+状态：天气与备份/导出/恢复已退出产品；推荐要素、54 件内置实图冷启动衣橱、18 套造型、计划/日历、深度洞察、购物守门、穿着记录持久化与录屏主线均已完成。Release APK、模拟器一键导入闭环、响应矩阵、短录屏证据和 5–7 分钟脚本已就绪；54 件新包尚未在物理 Android 设备复验，最终旁白成片不在当前证据范围。
 方向决策：2026-07-31 用户拍板抠图改为现成分割 API（唯一路径），端侧 ONNX 作废；**默认引擎已选定腾讯云数据万象 GoodsMatting**（用户已配好账号）。AGENT_GOAL/TECH_STACK/MVP-002/MVP-003 已同步修订，详见 PROGRESS.md 决策记录与 BLOCKED.md B-8。
 
 ## 状态枚举
 
 - `READY`：可以开始。
 - `IN_PROGRESS`：唯一正在执行的任务卡。
+- `READY_FOR_RECORDING`：实现与验证已完成，等待最终成片录制或用户验收。
 - `BLOCKED`：存在需要外部输入的阻塞。
 - `ACCEPTED`：验收证据完整。
 
@@ -17,10 +18,10 @@
 
 | 字段 | 内容 |
 |---|---|
-| 卡片 | 无（P0 全部 ACCEPTED） |
-| 依赖 | MVP-000 至 MVP-011 + MVP-014（全部 ACCEPTED） |
-| 已完成 | 2026-08-02 MVP-014 ACCEPTED：Release APK v0.1.0 签名构建（keystore.properties + releaseSigning + aapt 核对 com.clothes.app/0.1.0/versionCode=1）+ Debug 27 件闭环冒烟（恢复->推荐->记录->重启持久）+ Release 飞行模式断网（onboarding/4 tab 空状态/天气降级/重启持久）+ 升级安装迁移（adb install -r 保留 27 件 + schema v8 迁移）+ 反向验证（migrationRollback.test.ts 2 用例：v5 升级 v6 故障 ROLLBACK 保留数据 + 修复后升级成功 + 幂等）+ 模拟器响应矩阵 6 配置（360×800/390×844/430×932/1.3×字体/深色/TalkBack）+ 性能（300 件 5ms/冷启动 7.1s/PSS 545MB）+ 64 suites/483 tests/0 failed/lint 0 err/13 warn |
-| 待办 | 无 P0 待办。P1 队列待激活（MVP-012/013/P1-001/P1-002） |
+| 卡片 | DEMO-001（READY_FOR_RECORDING） |
+| 依赖 | 已完成的 MVP-005/006/009/011/012 本地能力 |
+| 已完成 | 今日推荐、只换一件、穿着记录、计划/日历、洞察、购物守门、范围删减、推荐要素设置、54 件图片 DemoDataPack、一键私有目录导入、录屏主线打磨、全量门禁、Release 与 Android 模拟器验证。 |
+| 待办 | 用户升级安装 `scripts/evidence/DEMO-001/physical-device/clothes-demo-54-items.apk`，在 onboarding 点“直接体验完整 Demo”或到“设置 → 演示数据”重新载入；再按录屏脚本录制最终旁白成片。 |
 
 ## MVP-014 验收结果（ACCEPTED -- 2026-08-02）
 

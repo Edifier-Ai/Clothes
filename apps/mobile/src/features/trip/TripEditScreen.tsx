@@ -24,8 +24,7 @@ export interface TripEditScreenProps {
 
 /**
  * 新建/编辑旅行（TRP-02）：名称、目的地、当地日期范围（YYYY-MM-DD）、
- * 时区（IANA）、活动（每行 date+timeLabel+note）。天气快照可选且本卡不强制抓取
- * （任务卡「天气不可用不阻塞旅行」），UI 留空显示「无天气」。
+ * 时区（IANA）、活动（每行 date+timeLabel+note）。
  * 保存失败保留表单只提示错误（与 PlanEditScreen 一致）。
  */
 export default function TripEditScreen({ idParam }: TripEditScreenProps) {
@@ -116,7 +115,6 @@ export default function TripEditScreen({ idParam }: TripEditScreenProps) {
             timeLabel: a.timeLabel.trim(),
             note: a.note.trim() || null,
           })),
-        weatherSnapshot: null,
       });
       router.back();
     } catch {

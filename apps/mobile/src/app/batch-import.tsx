@@ -1,6 +1,8 @@
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
@@ -12,6 +14,7 @@ import {
   getSnapshot,
   restoreOnBoot,
   retryFailed,
+  rootAbs,
   startProcessing,
 } from '@/core/cutout/cutoutService';
 import {
@@ -25,16 +28,36 @@ import {
 import type { TencentCiConfig } from '@/native/tencentCiEngine';
 import type { QueueSnapshot } from '@/core/cutout/processor';
 import { extFromUri } from '@/core/files/uri';
+import {
+  cancel,
+  clearSourceStaged,
+  listAll,
+  type CutoutQueueItem,
+} from '@/core/db/queue';
+import { writeMirror } from '@/core/garments/mirror';
+import {
+  createCameraCapture,
+  editorRouteFor,
+  fileUri,
+  nextSucceededGarmentId,
+  QUEUE_STATUS_LABEL,
+} from '@/features/cutout/importFlow';
 
 type App = Awaited<ReturnType<typeof openAppDb>>;
 
 const EMPTY_FORM: TencentCiConfig = { secretId: '', secretKey: '', bucket: '', region: '' };
+const captureCamera = createCameraCapture(ImagePicker);
 
 /** 批量抠图导入 IMP-02：多选→持久队列→顺序处理→进度→失败重试/跳过。抠图走腾讯云数据万象（需配置+告知确认）。 */
 export default function BatchImportScreen() {
+  const router = useRouter();
   const [snap, setSnap] = useState<QueueSnapshot | null>(null);
+  const [items, setItems] = useState<CutoutQueueItem[]>([]);
   const [networkPending, setNetworkPending] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [cameraSeries, setCameraSeries] = useState(false);
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [reviewedJobIds, setReviewedJobIds] = useState<Set<string>>(() => new Set());
   const [status, setStatus] = useState('');
   /** null=加载中；配置四字段是否齐全 */
   const [configured, setConfigured] = useState<boolean | null>(null);
@@ -43,15 +66,16 @@ export default function BatchImportScreen() {
   const [formError, setFormError] = useState('');
   const appRef = useRef<App | null>(null);
 
-  const refreshQueue = async (app: App) => {
+  const refreshQueue = useCallback(async (app: App) => {
     setSnap(await getSnapshot(app));
     setNetworkPending(await countNetworkPending(app));
-  };
+    setItems(await listAll(app.drizzleDb));
+  }, []);
 
-  const runQueue = async (app: App) => {
+  const runQueue = useCallback(async (app: App) => {
     await startProcessing(app, (s) => setSnap(s));
     await refreshQueue(app);
-  };
+  }, [refreshQueue]);
 
   useEffect(() => {
     void (async () => {
@@ -60,8 +84,7 @@ export default function BatchImportScreen() {
       appRef.current = app;
       await restoreOnBoot(app);
       const s0 = await getSnapshot(app);
-      setSnap(s0);
-      setNetworkPending(await countNetworkPending(app));
+      await refreshQueue(app);
       const config = await loadTencentCiConfig();
       const ok = missingTencentCiFields(config).length === 0;
       setConfigured(ok);
@@ -77,7 +100,7 @@ export default function BatchImportScreen() {
         setBusy(false);
       }
     })();
-  }, []);
+  }, [refreshQueue, runQueue]);
 
   const saveConfig = async () => {
     const missing = missingTencentCiFields(form);
@@ -115,10 +138,46 @@ export default function BatchImportScreen() {
     return res.assets.map((a) => ({ uri: a.uri, ext: extFromUri(a.uri, a.mimeType) }));
   };
 
+  const importPicked = async (picked: { uri: string; ext: string }[], source: '相册' | '相机') => {
+    const app = appRef.current;
+    if (!app || picked.length === 0) return;
+    setBusy(true);
+    try {
+      if (configured === true && consent) {
+        setStatus(`${source}照片入队中…`);
+        await enqueueBatch(app, picked);
+        await refreshQueue(app);
+        setStatus('抠图处理中…');
+        await runQueue(app);
+        setStatus(`已处理 ${picked.length} 张，成功项请逐件审核。`);
+      } else {
+        setStatus(`${source}照片原图入库中…`);
+        for (const p of picked) await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
+        setStatus(`已将 ${picked.length} 张原图安全入库；未授权云抠图，因此没有上传。`);
+        await refreshQueue(app);
+      }
+    } catch (error) {
+      setStatus(`导入失败：${error instanceof Error ? error.message : String(error)}。原图不会被覆盖。`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 单张与连续拍摄共用：权限只在这个用户点击动作里请求。 */
+  const takePhoto = async (continueSeries: boolean) => {
+    const result = await captureCamera();
+    if (result.kind === 'denied') {
+      setStatus('未获得相机权限。你仍可使用相册导入，也可稍后在系统设置中开启。');
+      setCameraSeries(false);
+      return;
+    }
+    if (result.kind === 'cancelled') return;
+    if (continueSeries) setCameraSeries(true);
+    await importPicked([result.picked], '相机');
+  };
+
   /** 已配置+已同意：多选 → 入队 → 顺序云抠图。 */
   const pickAndEnqueue = async () => {
-    const app = appRef.current;
-    if (!app) return;
     if (!configured) {
       setStatus('请先配置抠图服务（上方四个字段）。');
       return;
@@ -129,14 +188,7 @@ export default function BatchImportScreen() {
     }
     const picked = await pickImages();
     if (!picked) return;
-    setBusy(true);
-    setStatus('入队中…');
-    await enqueueBatch(app, picked);
-    await refreshQueue(app);
-    setStatus('处理中…');
-    await runQueue(app);
-    setStatus('完成');
-    setBusy(false);
+    await importPicked(picked, '相册');
   };
 
   /** 同意告知并继续：持久化确认 → 选图 → 入队 → 处理（含此前积压的 pending）。 */
@@ -146,16 +198,21 @@ export default function BatchImportScreen() {
     await grantUploadConsent();
     setConsent(true);
     const picked = await pickImages();
-    setBusy(true);
     if (picked) {
-      setStatus('入队中…');
-      await enqueueBatch(app, picked);
+      setBusy(true);
+      try {
+        setStatus('入队中…');
+        await enqueueBatch(app, picked);
+        await refreshQueue(app);
+        setStatus('处理中…');
+        await runQueue(app);
+        setStatus('完成，成功项请逐件审核。');
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
     await refreshQueue(app);
-    setStatus('处理中…');
-    await runQueue(app);
-    setStatus('完成');
-    setBusy(false);
   };
 
   /** 拒绝上传：不抠图，衣物以原图入库（蒙版后续可补）。 */
@@ -165,12 +222,17 @@ export default function BatchImportScreen() {
     const picked = await pickImages();
     if (!picked) return;
     setBusy(true);
-    setStatus('原图入库中…');
-    for (const p of picked) {
-      await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
+    try {
+      setStatus('原图入库中…');
+      for (const p of picked) {
+        await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
+      }
+      setStatus(`已原图入库 ${picked.length} 件；没有上传，可在确认告知后补抠图。`);
+    } catch (error) {
+      setStatus(`原图导入失败：${error instanceof Error ? error.message : String(error)}。`);
+    } finally {
+      setBusy(false);
     }
-    setStatus(`已原图入库 ${picked.length} 件（未抠图，可在确认告知后补抠）。`);
-    setBusy(false);
   };
 
   const retry = async () => {
@@ -194,7 +256,41 @@ export default function BatchImportScreen() {
     setBusy(false);
   };
 
+  const skipItem = async (item: CutoutQueueItem) => {
+    const app = appRef.current;
+    if (!app || !['pending', 'failed'].includes(item.job.status)) return;
+    setBusy(true);
+    try {
+      await cancel(app.drizzleDb, item.job.id, Date.now());
+      // 只清理队列暂存副本；originals/ 中已入库原图及衣物记录绝不删除。
+      if (item.job.sourceStagedPath) {
+        await FileSystem.deleteAsync(item.job.sourceStagedPath, { idempotent: true }).catch(() => undefined);
+        await clearSourceStaged(app.drizzleDb, item.job.id, Date.now());
+      }
+      await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
+      await refreshQueue(app);
+      setStatus(`已跳过「${item.garmentName}」的抠图；原图仍安全保留在衣橱。`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const acceptReview = (item: CutoutQueueItem) => {
+    const reviewed = new Set(reviewedJobIds);
+    reviewed.add(item.job.id);
+    setReviewedJobIds(reviewed);
+    const next = items.find(
+      (candidate) => candidate.job.status === 'succeeded'
+        && candidate.job.id !== item.job.id
+        && !reviewed.has(candidate.job.id),
+    );
+    setReviewJobId(next?.job.id ?? null);
+    setStatus(next ? '已接受，继续审核下一件。' : '本批成功项已审核完，可返回衣橱继续整理。');
+  };
+
   const ready = configured === true && consent;
+  const reviewItem = reviewJobId ? items.find((item) => item.job.id === reviewJobId) ?? null : null;
+  const reviewNextId = reviewItem ? nextSucceededGarmentId(items, reviewItem.job.id, reviewedJobIds) : undefined;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -262,8 +358,8 @@ export default function BatchImportScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>上传告知</Text>
           <Text style={styles.cardHint}>
-            抠图会把选中的照片上传至腾讯云数据万象处理；处理后即删除云端文件，不留存；
-            凭证只保存在本机。确认后才会入队抠图。
+            抠图会把选中的照片上传至腾讯云数据万象处理；App 在处理完成后请求删除 COS 暂存对象，
+            云服务处理受腾讯条款约束；凭证只保存在本机。确认后才会入队抠图。
           </Text>
           <Pressable accessibilityRole="button" onPress={agreeAndContinue} disabled={busy} style={[styles.btn, busy && styles.btnDisabled]}>
             <Text style={styles.btnLabel}>同意并继续</Text>
@@ -277,15 +373,46 @@ export default function BatchImportScreen() {
       <Pressable accessibilityRole="button" onPress={pickAndEnqueue} disabled={busy || !ready} style={[styles.btn, (busy || !ready) && styles.btnDisabled]}>
         <Text style={styles.btnLabel}>{busy ? '处理中…' : '从相册批量选择'}</Text>
       </Pressable>
+      {configured === false ? (
+        <Pressable accessibilityRole="button" onPress={importOriginalOnly} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
+          <Text style={styles.btnGhostLabel}>不配置服务，仅导入原图</Text>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.captureRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="拍一件"
+          onPress={() => void takePhoto(false)}
+          disabled={busy}
+          style={[styles.btnGhost, styles.captureButton, busy && styles.btnDisabled]}
+        >
+          <Text style={styles.btnGhostLabel}>拍一件</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={cameraSeries ? '继续拍一件' : '开始连续拍摄'}
+          onPress={() => void takePhoto(true)}
+          disabled={busy}
+          style={[styles.btnGhost, styles.captureButton, cameraSeries && styles.selectedButton, busy && styles.btnDisabled]}
+        >
+          <Text style={[styles.btnGhostLabel, cameraSeries && styles.selectedButtonLabel]}>
+            {cameraSeries ? '继续拍一件' : '连续拍摄'}
+          </Text>
+        </Pressable>
+      </View>
+      {cameraSeries ? (
+        <Pressable accessibilityRole="button" onPress={() => setCameraSeries(false)} style={styles.finishSeries}>
+          <Text style={styles.finishSeriesLabel}>结束连续拍摄</Text>
+        </Pressable>
+      ) : null}
+      <Text style={styles.permissionHint}>相机权限只会在你点击拍摄后请求；拒绝后仍可使用相册。</Text>
 
       {snap ? (
         <View style={styles.progress}>
-          <Text style={styles.line}>待处理 pending: {snap.pending}</Text>
-          <Text style={styles.line}>处理中 running: {snap.running}</Text>
-          <Text style={styles.line}>成功 succeeded: {snap.succeeded}</Text>
-          <Text style={styles.line}>失败 failed: {snap.failed}</Text>
-          <Text style={styles.line}>取消 cancelled: {snap.cancelled}</Text>
-          <Text style={styles.line}>总计 total: {snap.total}</Text>
+          <Text style={styles.cardTitle}>处理进度</Text>
+          <Text style={styles.line}>待处理 {snap.pending} · 处理中 {snap.running} · 待审核 {snap.succeeded}</Text>
+          <Text style={styles.line}>失败 {snap.failed} · 已跳过 {snap.cancelled} · 共 {snap.total}</Text>
           {snap.pending > 0 && configured === false ? (
             <Text style={styles.hint}>待配置：保存抠图服务配置并确认告知后，这些任务自动可续跑。</Text>
           ) : null}
@@ -313,9 +440,101 @@ export default function BatchImportScreen() {
         </View>
       ) : null}
 
+      {items.length > 0 ? (
+        <View style={styles.queueSection}>
+          <Text style={styles.sectionTitle}>逐件处理</Text>
+          {items.map((item, index) => {
+            const preview = fileUri(
+              rootAbs(),
+              item.job.thumbnailRelPath ?? item.originalRelPath ?? item.job.originalRelPath ?? item.job.sourceStagedPath,
+            );
+            const succeeded = item.job.status === 'succeeded';
+            const canSkip = item.job.status === 'pending' || item.job.status === 'failed';
+            return (
+              <View key={item.job.id} style={[styles.queueItem, reviewJobId === item.job.id && styles.queueItemSelected]}>
+                {preview ? (
+                  <Image source={{ uri: preview }} style={styles.thumbnail} accessibilityLabel={`${item.garmentName}缩略图`} />
+                ) : (
+                  <View style={styles.thumbnailPlaceholder}><Text style={styles.thumbnailNumber}>{index + 1}</Text></View>
+                )}
+                <View style={styles.queueBody}>
+                  <Text style={styles.itemName}>{item.garmentName}</Text>
+                  <Text style={[styles.itemStatus, succeeded && styles.itemStatusReady]}>
+                    {reviewedJobIds.has(item.job.id) ? '已审核' : QUEUE_STATUS_LABEL[item.job.status] ?? '未知状态'}
+                  </Text>
+                  {item.job.errorMessage ? (
+                    <Text style={styles.itemError} numberOfLines={3}>
+                      {item.job.errorCode ? `${item.job.errorCode}：` : ''}{item.job.errorMessage}
+                    </Text>
+                  ) : null}
+                </View>
+                {succeeded ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`审核${item.garmentName}`}
+                    onPress={() => setReviewJobId(item.job.id)}
+                    style={styles.itemAction}
+                  >
+                    <Text style={styles.itemActionLabel}>审核</Text>
+                  </Pressable>
+                ) : null}
+                {canSkip ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`跳过${item.garmentName}`}
+                    onPress={() => void skipItem(item)}
+                    disabled={busy}
+                    style={styles.itemAction}
+                  >
+                    <Text style={styles.skipLabel}>跳过</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {reviewItem ? (
+        <View style={styles.reviewCard}>
+          <Text style={styles.sectionTitle}>审核 · {reviewItem.garmentName}</Text>
+          <Text style={styles.cardHint}>先对比原图与透明预览。效果满意就接受；边缘有缺口或残留再进入修边。</Text>
+          <View style={styles.compareRow}>
+            <View style={styles.compareCell}>
+              <Text style={styles.compareLabel}>原图</Text>
+              <Image
+                accessibilityLabel="审核原图"
+                source={{ uri: fileUri(rootAbs(), reviewItem.originalRelPath ?? reviewItem.job.originalRelPath) ?? '' }}
+                style={styles.compareImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.compareCell}>
+              <Text style={styles.compareLabel}>抠图预览</Text>
+              <Image
+                accessibilityLabel="抠图预览"
+                source={{ uri: fileUri(rootAbs(), reviewItem.job.previewRelPath) ?? '' }}
+                style={styles.compareImage}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => acceptReview(reviewItem)} style={styles.btn}>
+            <Text style={styles.btnLabel}>接受效果{reviewNextId ? '并审核下一件' : ''}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push(editorRouteFor(reviewItem, reviewNextId))}
+            style={styles.btnGhost}
+          >
+            <Text style={styles.btnGhostLabel}>进入修边</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <Text style={styles.note}>
-        说明：抠图使用腾讯云数据万象 GoodsMatting，照片处理后即删不留存；失败可重试或跳过，不阻塞衣物入库；
-        杀进程后重启，已提交任务不重做，剩余任务恢复。
+        说明：抠图使用腾讯云数据万象 GoodsMatting；App 在处理完成后请求删除 COS 暂存对象，云服务处理受腾讯条款约束。
+        失败可重试或跳过，不阻塞衣物入库；杀进程后重启，已提交任务不重做，剩余任务恢复。
       </Text>
     </ScrollView>
   );
@@ -325,7 +544,7 @@ const styles = StyleSheet.create({
   container: { padding: spacing.lg, backgroundColor: palette.paperWhite },
   title: { ...typography.title, color: palette.charcoal },
   sub: { ...typography.bodySm, color: palette.charcoalSoft, marginTop: spacing.xs, marginBottom: spacing.md },
-  card: { padding: spacing.md, backgroundColor: palette.sandSoft, borderRadius: radius.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: palette.hairline },
+  card: { padding: spacing.md, backgroundColor: palette.sandSoft, borderRadius: radius.sm, marginBottom: spacing.md, borderWidth: 1, borderColor: palette.hairline },
   cardTitle: { ...typography.headline, color: palette.charcoal },
   cardHint: { ...typography.bodySm, color: palette.charcoalSoft, marginTop: spacing.xs, marginBottom: spacing.sm },
   input: { minHeight: hitTarget.min, borderRadius: radius.md, backgroundColor: palette.white, borderWidth: 1, borderColor: palette.hairline, paddingHorizontal: spacing.sm, marginBottom: spacing.sm, ...typography.bodySm, color: palette.charcoal },
@@ -333,16 +552,43 @@ const styles = StyleSheet.create({
   configLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
   clearBtn: { minHeight: hitTarget.min, justifyContent: 'center', paddingHorizontal: spacing.sm },
   clearBtnLabel: { ...typography.bodySm, color: palette.danger },
-  btn: { minHeight: hitTarget.preferred, borderRadius: radius.md, backgroundColor: palette.oxblood, justifyContent: 'center', alignItems: 'center' },
-  btnGhost: { marginTop: spacing.sm, minHeight: hitTarget.preferred, borderRadius: radius.md, borderWidth: 1, borderColor: palette.oxblood, justifyContent: 'center', alignItems: 'center' },
-  btnGhostLabel: { ...typography.body, color: palette.oxblood },
+  btn: { minHeight: hitTarget.preferred, borderRadius: radius.sm, backgroundColor: palette.charcoal, justifyContent: 'center', alignItems: 'center' },
+  btnGhost: { marginTop: spacing.sm, minHeight: hitTarget.preferred, borderRadius: radius.sm, borderWidth: 1, borderColor: palette.charcoal, justifyContent: 'center', alignItems: 'center' },
+  btnGhostLabel: { ...typography.body, color: palette.charcoal },
   btnDisabled: { opacity: 0.5 },
   btnLabel: { ...typography.body, color: palette.white },
-  progress: { marginTop: spacing.lg, padding: spacing.md, backgroundColor: palette.sandSoft, borderRadius: radius.lg },
-  line: { ...typography.bodySm, color: palette.charcoal, fontFamily: 'monospace' },
+  captureRow: { flexDirection: 'row', gap: spacing.sm },
+  captureButton: { flex: 1 },
+  selectedButton: { backgroundColor: palette.oxblood, borderColor: palette.oxblood },
+  selectedButtonLabel: { color: palette.white },
+  finishSeries: { minHeight: hitTarget.min, alignItems: 'center', justifyContent: 'center' },
+  finishSeriesLabel: { ...typography.bodySm, color: palette.oxblood },
+  permissionHint: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.xs },
+  progress: { marginTop: spacing.lg, padding: spacing.md, backgroundColor: palette.sandSoft, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline },
+  line: { ...typography.bodySm, color: palette.charcoal, marginTop: spacing.xxs },
   hint: { ...typography.bodySm, color: palette.oxblood, marginTop: spacing.xs },
   spinner: { marginTop: spacing.sm },
   status: { ...typography.bodySm, color: palette.oxblood, marginTop: spacing.xs },
   retry: { marginTop: spacing.sm, minHeight: hitTarget.min, borderRadius: radius.md, backgroundColor: palette.charcoal, justifyContent: 'center', alignItems: 'center' },
+  queueSection: { marginTop: spacing.lg },
+  sectionTitle: { ...typography.headline, color: palette.charcoal, marginBottom: spacing.sm },
+  queueItem: { minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.hairline },
+  queueItemSelected: { borderLeftWidth: 3, borderLeftColor: palette.oxblood, paddingLeft: spacing.xs },
+  thumbnail: { width: 64, height: 64, backgroundColor: palette.sandSoft },
+  thumbnailPlaceholder: { width: 64, height: 64, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.sandSoft },
+  thumbnailNumber: { ...typography.display, color: palette.mutedGold },
+  queueBody: { flex: 1 },
+  itemName: { ...typography.body, color: palette.charcoal },
+  itemStatus: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.xxs },
+  itemStatusReady: { color: palette.oxblood },
+  itemError: { ...typography.caption, color: palette.danger, marginTop: spacing.xxs },
+  itemAction: { minWidth: 52, minHeight: hitTarget.min, alignItems: 'center', justifyContent: 'center' },
+  itemActionLabel: { ...typography.bodySm, color: palette.oxblood },
+  skipLabel: { ...typography.bodySm, color: palette.danger },
+  reviewCard: { marginTop: spacing.lg, paddingVertical: spacing.lg, borderTopWidth: 1, borderTopColor: palette.charcoal },
+  compareRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  compareCell: { flex: 1 },
+  compareLabel: { ...typography.caption, color: palette.charcoalSoft, marginBottom: spacing.xs },
+  compareImage: { width: '100%', aspectRatio: 0.8, backgroundColor: palette.sandSoft, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline },
   note: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.lg },
 });
