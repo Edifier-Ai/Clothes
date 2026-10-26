@@ -183,7 +183,7 @@ describe('TodayScreen（今日页）', () => {
     expect(screen.getByRole('button', { name: '开始整理衣橱' })).toBeOnTheScreen();
     expect(screen.getByText(/明确同意使用腾讯云抠图/)).toBeOnTheScreen();
     fireEvent.press(screen.getByRole('button', { name: '开始整理衣橱' }));
-    expect(mockPush).toHaveBeenCalledWith('/add-garment');
+    expect(mockPush).toHaveBeenCalledWith('/batch-import');
   });
 
   it('12 件合法衣橱展示推荐搭配与理由', async () => {

@@ -21,6 +21,8 @@ import {
 } from '@/core/garments/service';
 import type { CreateGarmentInput } from '@/core/db/dao';
 import type { StagedImage } from '@/core/files/imageStore';
+import { openAppDb } from '@/core/db/expoDb';
+import { cutoutGarmentInBackground } from '@/core/cutout/cutoutService';
 
 const CATEGORIES: { value: CreateGarmentInput['category']; label: string }[] = [
   { value: 'top', label: '上装' },
@@ -105,8 +107,10 @@ export default function AddGarmentScreen() {
     setError(null);
     try {
       // prepareAdd 已完成校验/去重和暂存；保存必须提交同一份 staged，不能再次 prepare。
-      await commitAdd(staged, form, picked.ext);
+      const detail = await commitAdd(staged, form, picked.ext);
       if (stagedRef.current === staged) stagedRef.current = null;
+      // 保存即入队抠图（手机本地、后台进行）；失败不影响已保存的衣物，可在详情页重试。
+      void openAppDb().then((app) => cutoutGarmentInBackground(app, detail.garment.id)).catch(() => undefined);
       router.back();
     } catch {
       setError('保存失败：请重试。已填写的内容已保留。');
@@ -131,6 +135,8 @@ export default function AddGarmentScreen() {
           <Text style={styles.dropzoneText}>从相册选择一张衣物照片</Text>
         )}
       </Pressable>
+
+      <Text style={styles.label}>保存后会在手机本地自动抠图，照片不会上传。</Text>
 
       {duplicate ? (
         <Text style={styles.warn}>衣橱里已有相同图片的衣物。确认仍要添加为另一件，请保存。</Text>

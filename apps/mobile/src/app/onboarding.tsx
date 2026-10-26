@@ -1,14 +1,15 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { hitTarget, palette, radius, spacing, typography } from '@/design-system';
 import { openAppDb } from '@/core/db/expoDb';
-import { listActiveGarments } from '@/core/db/dao';
-import { addOriginalOnly } from '@/core/cutout/cutoutService';
+import { listActiveGarmentsWithThumbs } from '@/core/db/dao';
+import { enqueueBatch, ensureDirs, startProcessing } from '@/core/cutout/cutoutService';
+import type { GarmentCategory } from '@/core/db/schema';
 import { defaultDemoDataService } from '@/core/demo/demoDataService';
-import { extFromUri } from '@/core/files/uri';
+import { extFromUri, originalUri } from '@/core/files/uri';
 import {
   buildFirstOutfit,
   computeStep,
@@ -58,7 +59,7 @@ function recommendPick(status: QuotaStatus): OnboardCategory {
 }
 
 /** onboarding 的 free 槽在 schema 里映射为 accessory（NORM 把 accessory→free）。 */
-const SCHEMA_CAT: Record<OnboardCategory, string> = {
+const SCHEMA_CAT: Record<OnboardCategory, GarmentCategory> = {
   top: 'top',
   bottom: 'bottom',
   dress: 'dress',
@@ -66,6 +67,34 @@ const SCHEMA_CAT: Record<OnboardCategory, string> = {
   outerwear: 'outerwear',
   free: 'accessory',
 };
+
+interface OnboardItem {
+  id: string;
+  category: string;
+  name: string;
+  imageRelPath: string | null;
+}
+
+/** 首套搭配里的一件：图 + 类别 + 名字（找不到图就只显示名字块）。 */
+function OutfitPiece({ label, item }: { label: string; item: OnboardItem | undefined }) {
+  if (!item) return null;
+  return (
+    <View style={styles.piece}>
+      {item.imageRelPath ? (
+        <Image
+          accessibilityLabel={`${item.name}图片`}
+          source={{ uri: originalUri(item.imageRelPath) }}
+          style={styles.pieceImage}
+          resizeMode="contain"
+        />
+      ) : (
+        <View style={[styles.pieceImage, styles.pieceBlank]} />
+      )}
+      <Text style={styles.pieceLabel}>{label}</Text>
+      <Text style={styles.pieceName} numberOfLines={1}>{item.name}</Text>
+    </View>
+  );
+}
 
 /** 卡片容器（模块级组件，避免在 render 内定义导致 state 重置）。 */
 function Card({ children }: { children: ReactNode }) {
@@ -93,7 +122,7 @@ function Secondary({ label, onPress, disabled }: { label: string; onPress: () =>
 export default function OnboardingScreen() {
   const router = useRouter();
   const [state, setState] = useState<OnboardState | null>(null);
-  const [items, setItems] = useState<{ id: string; category: string }[]>([]);
+  const [items, setItems] = useState<OnboardItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [outfit, setOutfit] = useState<ReturnType<typeof buildFirstOutfit> | null>(null);
@@ -102,8 +131,13 @@ export default function OnboardingScreen() {
   const refresh = useCallback(async () => {
     const app = await openAppDb();
     const st = await loadOnboardState(app.db);
-    const list = await listActiveGarments(app.db);
-    const mapped = list.map((i: { id: string; category: string }) => ({ id: i.id, category: i.category }));
+    const list = await listActiveGarmentsWithThumbs(app.db, app.drizzleDb);
+    const mapped: OnboardItem[] = list.map((i) => ({
+      id: i.garment.id,
+      category: i.garment.category,
+      name: i.garment.name,
+      imageRelPath: i.imageRelPath,
+    }));
     setItems(mapped);
     const step = computeStep(st, list.length, st.completed);
     const next = { ...st, step };
@@ -152,30 +186,37 @@ export default function OnboardingScreen() {
     }));
   };
 
-  const addOne = async () => {
+  /** 选这一类的照片（可多选）→ 入队 → 手机本地抠图；每张照片都归到当前选中的类别。 */
+  const addPhotos = async () => {
     setBusy(true);
     setNote('');
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         setNote('相册权限被拒绝：可稍后在衣橱补录，不阻塞浏览。');
-        setBusy(false);
         return;
       }
-      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
-      if (res.canceled || !res.assets[0]) {
-        setBusy(false);
-        return;
-      }
-      const a = res.assets[0];
-      const app = await openAppDb();
-      await addOriginalOnly(app, {
-        uri: a.uri,
-        ext: extFromUri(a.uri, a.mimeType),
-        name: `${PICK_LABEL[pickCat]} ${items.length + 1}`,
-        category: SCHEMA_CAT[pickCat],
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 0.9,
       });
+      if (res.canceled || res.assets.length === 0) return;
+      const app = await openAppDb();
+      await ensureDirs();
+      setNote(`正在抠图（手机本地，照片不上传）：${res.assets.length} 张…`);
+      await enqueueBatch(
+        app,
+        res.assets.map((a) => ({ uri: a.uri, ext: extFromUri(a.uri, a.mimeType), category: SCHEMA_CAT[pickCat] })),
+      );
       await refresh();
+      const { blockedReason } = await startProcessing(app);
+      await refresh();
+      setNote(
+        blockedReason
+          ? `已添加 ${res.assets.length} 件，抠图暂时无法进行（${blockedReason}），先用原图，之后可在衣物详情里补抠图。`
+          : `已添加 ${res.assets.length} 件${PICK_LABEL[pickCat]}。`,
+      );
     } catch (e) {
       setNote('添加失败：' + String(e));
     } finally {
@@ -212,6 +253,7 @@ export default function OnboardingScreen() {
 
   const step = state.step;
   const itemsCount = items.length;
+  const itemById = (id: string) => items.find((i) => i.id === id);
   const status = quotaStatus(items);
 
   return (
@@ -258,7 +300,7 @@ export default function OnboardingScreen() {
           <Text style={styles.body}>
             上装 {status.counts.top}/{QUOTA.top} · 下装 {status.counts.bottom}/{QUOTA.bottom} · 鞋 {status.counts.shoes}/{QUOTA.shoes} · 外套 {status.counts.outerwear}/{QUOTA.outerwear} · 自由 {status.counts.free}/{QUOTA.free}
           </Text>
-          <Text style={styles.body}>选择类别后添加真实衣物（连衣裙可顶替上装/下装缺口）：</Text>
+          <Text style={styles.body}>选好类别，再从相册一次选多张该类的照片（连衣裙可顶替上装/下装缺口）：</Text>
           <View style={styles.chipRow}>
             {PICK_CATS.map((c) => (
               <Pressable key={c} accessibilityRole="button" onPress={() => setPickCat(c)} style={[styles.chip, pickCat === c && styles.chipOn]}>
@@ -266,7 +308,7 @@ export default function OnboardingScreen() {
               </Pressable>
             ))}
           </View>
-          <Primary label={busy ? '添加中…' : `添加一件${PICK_LABEL[pickCat]}`} onPress={addOne} disabled={busy} />
+          <Primary label={busy ? '处理中…' : `选${PICK_LABEL[pickCat]}照片（可多选）`} onPress={addPhotos} disabled={busy} />
           {note ? <Text style={styles.note}>{note}</Text> : null}
           {status.missing.length > 0 ? (
             <Text style={styles.body}>仍缺：{status.missing.map((m) => PICK_LABEL[m]).join('、')}</Text>
@@ -284,7 +326,16 @@ export default function OnboardingScreen() {
         <Card>
           <Text style={styles.title}>6 件预览</Text>
           {outfit && outfit.ok ? (
-            <Text style={styles.body}>基于已录衣物可组成首套：{outfit.outfit.top.id} + {outfit.outfit.bottom.id} + {outfit.outfit.shoes.id}。继续补到 12 件解锁完整推荐。</Text>
+            <>
+              <Text style={styles.body}>基于已录衣物可以先搭出一套。继续补到 12 件解锁完整推荐。</Text>
+              <View style={styles.pieceRow}>
+                <OutfitPiece label="上装" item={itemById(outfit.outfit.top.id)} />
+                {outfit.outfit.bottom.id !== outfit.outfit.top.id ? (
+                  <OutfitPiece label="下装" item={itemById(outfit.outfit.bottom.id)} />
+                ) : null}
+                <OutfitPiece label="鞋" item={itemById(outfit.outfit.shoes.id)} />
+              </View>
+            </>
           ) : (
             <Text style={styles.body}>当前衣物尚不足以组成完整搭配，继续添加（尤其鞋/下装）。</Text>
           )}
@@ -296,7 +347,14 @@ export default function OnboardingScreen() {
           <Text style={styles.title}>你的首套搭配</Text>
           {outfit && outfit.ok ? (
             <>
-              <Text style={styles.body}>上装 {outfit.outfit.top.id} · 下装 {outfit.outfit.bottom.id} · 鞋 {outfit.outfit.shoes.id}{outfit.outfit.outerwear ? ` · 外套 ${outfit.outfit.outerwear.id}` : ''}</Text>
+              <View style={styles.pieceRow}>
+                <OutfitPiece label={outfit.outfit.top.id === outfit.outfit.bottom.id ? '连衣裙' : '上装'} item={itemById(outfit.outfit.top.id)} />
+                {outfit.outfit.bottom.id !== outfit.outfit.top.id ? (
+                  <OutfitPiece label="下装" item={itemById(outfit.outfit.bottom.id)} />
+                ) : null}
+                <OutfitPiece label="鞋" item={itemById(outfit.outfit.shoes.id)} />
+                {outfit.outfit.outerwear ? <OutfitPiece label="外套" item={itemById(outfit.outfit.outerwear.id)} /> : null}
+              </View>
               {outfit.outfit.reasons.map((r, i) => (
                 <Text key={i} style={styles.reason}>· {r}</Text>
               ))}
@@ -319,6 +377,12 @@ const styles = StyleSheet.create({
   title: { ...typography.title, color: palette.charcoal },
   body: { ...typography.body, color: palette.charcoalSoft, marginVertical: spacing.sm },
   reason: { ...typography.bodySm, color: palette.oxblood },
+  pieceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginVertical: spacing.sm },
+  piece: { width: '47%' },
+  pieceImage: { width: '100%', aspectRatio: 0.8, backgroundColor: palette.white, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline },
+  pieceBlank: { backgroundColor: palette.sandSoft },
+  pieceLabel: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.xxs },
+  pieceName: { ...typography.bodySm, color: palette.charcoal },
   btn: { minHeight: hitTarget.preferred, borderRadius: radius.md, backgroundColor: palette.oxblood, justifyContent: 'center', alignItems: 'center', marginTop: spacing.md },
   btnDisabled: { opacity: 0.5 },
   btnLabel: { ...typography.body, color: palette.white },

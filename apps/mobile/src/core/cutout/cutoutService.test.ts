@@ -187,6 +187,16 @@ describe('导入后归类 / 补抠图', () => {
     expect(t.db.select().from(garmentTags).where(eq(garmentTags.garmentId, a)).all()).toHaveLength(1);
   });
 
+  it('点错类别再改回：上一次生成的自动名跟着更新，不留下错名', async () => {
+    mockFiles.set('file:///picked/c.png', 'cGljay0z');
+    const res = await enqueueBatch(app() as never, [{ uri: 'file:///picked/c.png', ext: 'png' }]);
+    const gid = res.garmentIds[0];
+    await categorizeGarment(app() as never, gid, 'bottom');
+    expect(t.db.select().from(garments).where(eq(garments.id, gid)).get()!.name).toBe('下装');
+    await categorizeGarment(app() as never, gid, 'shoes');
+    expect(t.db.select().from(garments).where(eq(garments.id, gid)).get()!.name).toBe('鞋');
+  });
+
   it('enqueueGarmentCutout：复制原图到暂存区入队，原图不动；重抠清空旧笔画；未完成时去重', async () => {
     mockFiles.set('file:///picked/o.jpg', 'b3JpZw==');
     const res = await enqueueBatch(app() as never, [{ uri: 'file:///picked/o.jpg', ext: 'jpg' }]);

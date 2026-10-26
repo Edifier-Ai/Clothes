@@ -14,9 +14,16 @@ const mockLoadOnboardState = jest.fn(
   }),
 );
 const mockSaveOnboardState = jest.fn(async (..._args: unknown[]): Promise<void> => {});
-const mockListActiveGarments = jest.fn(
-  async (..._args: unknown[]): Promise<{ id: string; category: string }[]> => [],
-);
+type ListedGarment = { garment: { id: string; category: string; name: string }; imageRelPath: string | null };
+const mockListActiveGarments = jest.fn(async (..._args: unknown[]): Promise<ListedGarment[]> => []);
+const mockEnqueueBatch = jest.fn(async (..._args: unknown[]) => ({ garmentIds: [] as string[], jobIds: [] as string[] }));
+const mockStartProcessing = jest.fn(async (..._args: unknown[]) => ({ processed: 0, blockedReason: null as string | null }));
+const mockRequestPermission = jest.fn(async (..._args: unknown[]) => ({ granted: true }));
+const mockLaunchPicker = jest.fn(async (..._args: unknown[]): Promise<unknown> => ({ canceled: true, assets: null }));
+
+function listed(id: string, category: string, name: string, imageRelPath: string | null = `thumbnails/${id}.png`): ListedGarment {
+  return { garment: { id, category, name }, imageRelPath };
+}
 const mockLoadDemo = jest.fn(async () => ({
   anchorDate: '2026-08-28', garments: 12, looks: 3, plans: 3, wearDays: 8, shoppingCases: 1,
 }));
@@ -26,20 +33,22 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('expo-image-picker', () => ({
-  requestMediaLibraryPermissionsAsync: jest.fn(),
-  launchImageLibraryAsync: jest.fn(),
+  requestMediaLibraryPermissionsAsync: (...args: unknown[]) => mockRequestPermission(...args),
+  launchImageLibraryAsync: (...args: unknown[]) => mockLaunchPicker(...args),
 }));
 
 jest.mock('@/core/db/expoDb', () => ({
-  openAppDb: jest.fn(async () => ({ db: {} })),
+  openAppDb: jest.fn(async () => ({ db: {}, drizzleDb: {} })),
 }));
 
 jest.mock('@/core/db/dao', () => ({
-  listActiveGarments: (...args: unknown[]) => mockListActiveGarments(...args),
+  listActiveGarmentsWithThumbs: (...args: unknown[]) => mockListActiveGarments(...args),
 }));
 
 jest.mock('@/core/cutout/cutoutService', () => ({
-  addOriginalOnly: jest.fn(),
+  enqueueBatch: (...args: unknown[]) => mockEnqueueBatch(...args),
+  ensureDirs: jest.fn(async () => undefined),
+  startProcessing: (...args: unknown[]) => mockStartProcessing(...args),
 }));
 
 jest.mock('@/core/demo/demoDataService', () => ({
@@ -63,6 +72,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockListActiveGarments.mockResolvedValue([]);
   mockSaveOnboardState.mockResolvedValue(undefined);
+  mockRequestPermission.mockResolvedValue({ granted: true });
+  mockLaunchPicker.mockResolvedValue({ canceled: true, assets: null });
+  mockEnqueueBatch.mockResolvedValue({ garmentIds: [], jobIds: [] });
+  mockStartProcessing.mockResolvedValue({ processed: 0, blockedReason: null });
   mockLoadDemo.mockResolvedValue({
     anchorDate: '2026-08-28', garments: 12, looks: 3, plans: 3, wearDays: 8, shoppingCases: 1,
   });
@@ -117,4 +130,56 @@ it('稍后补录先持久完成 onboarding，再进入首页', async () => {
     mockReplace.mock.invocationCallOrder[0],
   );
   expect(mockReplace).toHaveBeenCalledWith('/');
+});
+
+it('录入步骤：按类别一次多选照片 → 带类别入队 → 本地抠图', async () => {
+  mockLoadOnboardState.mockResolvedValue(stateAt('quota'));
+  mockLaunchPicker.mockResolvedValue({
+    canceled: false,
+    assets: [
+      { uri: 'file:///a.jpg', mimeType: 'image/jpeg' },
+      { uri: 'file:///b.png', mimeType: 'image/png' },
+    ],
+  });
+  render(<OnboardingScreen />);
+
+  fireEvent.press(await screen.findByRole('button', { name: '下装' }));
+  fireEvent.press(await screen.findByRole('button', { name: '选下装照片（可多选）' }));
+
+  await waitFor(() => expect(mockEnqueueBatch).toHaveBeenCalledTimes(1));
+  expect(mockLaunchPicker).toHaveBeenCalledWith(expect.objectContaining({ allowsMultipleSelection: true }));
+  expect(mockEnqueueBatch).toHaveBeenCalledWith(expect.anything(), [
+    { uri: 'file:///a.jpg', ext: 'jpg', category: 'bottom' },
+    { uri: 'file:///b.png', ext: 'png', category: 'bottom' },
+  ]);
+  expect(mockStartProcessing).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.getByText(/已添加 2 件下装/)).toBeOnTheScreen());
+});
+
+it('录入步骤：本地模型不可用时给出原因，照片仍已入库', async () => {
+  mockLoadOnboardState.mockResolvedValue(stateAt('quota'));
+  mockLaunchPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///a.jpg', mimeType: 'image/jpeg' }] });
+  mockStartProcessing.mockResolvedValue({ processed: 0, blockedReason: '本地抠图模型加载失败：x' });
+  render(<OnboardingScreen />);
+
+  fireEvent.press(await screen.findByRole('button', { name: /^选.*照片（可多选）$/ }));
+  await waitFor(() => expect(screen.getByText(/抠图暂时无法进行（本地抠图模型加载失败：x）/)).toBeOnTheScreen());
+  expect(mockEnqueueBatch).toHaveBeenCalledTimes(1);
+});
+
+it('首套搭配展示衣物图片和名字，不再显示内部 ID', async () => {
+  mockLoadOnboardState.mockResolvedValue(stateAt('reveal'));
+  mockListActiveGarments.mockResolvedValue([
+    listed('id-top-1', 'top', '藏青上装'),
+    listed('id-bot-1', 'bottom', '黑色下装'),
+    listed('id-shoe-1', 'shoes', '白鞋'),
+  ]);
+  render(<OnboardingScreen />);
+
+  await waitFor(() => expect(screen.getByText('你的首套搭配')).toBeOnTheScreen());
+  expect(screen.getByText('藏青上装')).toBeOnTheScreen();
+  expect(screen.getByText('黑色下装')).toBeOnTheScreen();
+  expect(screen.getByText('白鞋')).toBeOnTheScreen();
+  expect(screen.getByLabelText('藏青上装图片')).toBeOnTheScreen();
+  expect(screen.queryByText(/id-top-1/)).toBeNull();
 });

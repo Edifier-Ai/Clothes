@@ -34,6 +34,16 @@ jest.mock('expo-image-picker', () => ({
   launchImageLibraryAsync: (...args: unknown[]) => mockLaunchPicker(...args),
 }));
 
+const mockCutoutInBackground = jest.fn(async (..._args: unknown[]): Promise<string | null> => null);
+
+jest.mock('@/core/db/expoDb', () => ({
+  openAppDb: jest.fn(async () => ({ db: {}, drizzleDb: {} })),
+}));
+
+jest.mock('@/core/cutout/cutoutService', () => ({
+  cutoutGarmentInBackground: (...args: unknown[]) => mockCutoutInBackground(...args),
+}));
+
 jest.mock('@/core/garments/service', () => ({
   prepareAdd: (...args: unknown[]) => mockPrepareAdd(...args),
   commitAdd: (...args: unknown[]) => mockCommitAdd(...args),
@@ -65,7 +75,8 @@ async function chooseFirstImage() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockRequestPermission.mockResolvedValue({ granted: true });
-  mockCommitAdd.mockResolvedValue({});
+  mockCommitAdd.mockResolvedValue({ garment: { id: 'new-g' } });
+  mockCutoutInBackground.mockResolvedValue(null);
 });
 
 it('正常保存直接提交第一次 prepareAdd 的 staged，不再次 prepare', async () => {
@@ -81,6 +92,20 @@ it('正常保存直接提交第一次 prepareAdd 的 staged，不再次 prepare'
   await waitFor(() => expect(mockCommitAdd).toHaveBeenCalledWith(first, expect.anything(), 'jpg'));
   expect(mockPrepareAdd).toHaveBeenCalledTimes(1);
   expect(mockAddGarment).not.toHaveBeenCalled();
+  expect(mockBack).toHaveBeenCalledTimes(1);
+});
+
+it('保存后在后台为新衣物入队抠图；抠图失败不影响保存', async () => {
+  const first = staged('first');
+  mockLaunchPicker.mockResolvedValueOnce(picked('file:///first.jpg'));
+  mockPrepareAdd.mockResolvedValueOnce({ kind: 'ready', staged: first });
+  mockCutoutInBackground.mockRejectedValueOnce(new Error('model missing'));
+
+  render(<AddGarmentScreen />);
+  await chooseFirstImage();
+  fireEvent.press(screen.getByRole('button', { name: '保存衣物' }));
+
+  await waitFor(() => expect(mockCutoutInBackground).toHaveBeenCalledWith(expect.anything(), 'new-g'));
   expect(mockBack).toHaveBeenCalledTimes(1);
 });
 

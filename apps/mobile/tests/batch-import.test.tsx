@@ -139,6 +139,12 @@ describe('batch-import：默认本地抠图（未配置云端）', () => {
     expect(screen.getByRole('button', { name: '继续处理' })).toBeOnTheScreen();
   });
 
+  it('「添加一件并填写详情」进入单件添加页', async () => {
+    await renderLoaded();
+    fireEvent.press(screen.getByRole('button', { name: '添加一件并填写详情' }));
+    expect(mockRouterPush).toHaveBeenCalledWith('/add-garment');
+  });
+
   it('「仅导入原图（不抠图）」→ addOriginalOnly 入库，不入队不抠图', async () => {
     launchPicker.mockResolvedValue({
       canceled: false,

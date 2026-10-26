@@ -13,6 +13,7 @@ import { resolveCutoutEngine } from './engineResolver';
 import { drain, recover, snapshot, TRANSIENT_ERROR_NAMES, type QueueSnapshot } from './processor';
 import { writeMirror, restoreFromMirrorIfNeeded } from '../garments/mirror';
 import { uuidv7 } from '../id/uuidv7';
+import { createSerialQueue } from './serialQueue';
 
 const DIRS = ['originals', 'masks', 'previews', 'thumbnails', '_staging', '_tmp'];
 
@@ -142,6 +143,20 @@ export async function enqueueGarmentCutout(app: AppDb, garmentId: string): Promi
   return { jobId: r.id, deduped: r.deduped };
 }
 
+/**
+ * 保存衣物后顺手在后台抠图：入队 + 跑队列，任何失败都吞掉（原图已安全入库，用户可在详情页重试）。
+ * 返回引擎不可用原因（null = 已处理或无事可做），调用方一般不用理会。
+ */
+export async function cutoutGarmentInBackground(app: AppDb, garmentId: string): Promise<string | null> {
+  try {
+    await enqueueGarmentCutout(app, garmentId);
+    const { blockedReason } = await startProcessing(app);
+    return blockedReason;
+  } catch {
+    return null;
+  }
+}
+
 export type GarmentCutoutState =
   | { kind: 'none' }
   | { kind: 'pending' }
@@ -168,10 +183,14 @@ export async function categorizeGarment(app: AppDb, garmentId: string, category:
   const garment = await app.db.getGarment(garmentId);
   if (!garment) return;
   const color = (await app.db.getTagsByGarment(garmentId)).find((t) => t.kind === 'color')?.value ?? null;
+  // 系统起的名字（占位名，或上一次归类生成的自动名）可以随类别更新；用户自己起的名字不动。
+  const systemNamed =
+    isPlaceholderName(garment.name) ||
+    garment.name === autoGarmentName(garment.category as GarmentCategory, color);
   await updateGarment(
     app.db,
     garmentId,
-    { category, ...(isPlaceholderName(garment.name) ? { name: autoGarmentName(category, color) } : {}) },
+    { category, ...(systemNamed ? { name: autoGarmentName(category, color) } : {}) },
     Date.now(),
   );
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
@@ -245,7 +264,17 @@ export interface ProcessingResult {
   blockedReason: string | null;
 }
 
-export async function startProcessing(
+const serialize = createSerialQueue();
+
+/** 同一时间只跑一路 drain：批量页、详情页、添加页同时触发时排队。 */
+export function startProcessing(
+  app: AppDb,
+  onProgress?: (s: QueueSnapshot) => void,
+): Promise<ProcessingResult> {
+  return serialize(() => runProcessing(app, onProgress));
+}
+
+async function runProcessing(
   app: AppDb,
   onProgress?: (s: QueueSnapshot) => void,
 ): Promise<ProcessingResult> {

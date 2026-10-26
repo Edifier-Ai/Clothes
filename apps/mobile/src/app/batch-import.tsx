@@ -311,6 +311,9 @@ export default function BatchImportScreen() {
       <Pressable accessibilityRole="button" onPress={importOriginalOnly} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
         <Text style={styles.btnGhostLabel}>仅导入原图（不抠图）</Text>
       </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => router.push('/add-garment')} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
+        <Text style={styles.btnGhostLabel}>添加一件并填写详情</Text>
+      </Pressable>
 
       <View style={styles.captureRow}>
         <Pressable
