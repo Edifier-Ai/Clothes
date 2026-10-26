@@ -137,7 +137,7 @@ export default function PrivacySettingsScreen({
         description={
           draft?.photoUploadEnabled
             ? '仅在你发起抠图时上传所选单张原图；可随时撤销。'
-            : '照片留在设备；需要云抠图时会先要求你明确开启。'
+            : '照片留在设备，抠图在手机本地完成；需要云抠图时会先要求你明确开启。'
         }
       />
 

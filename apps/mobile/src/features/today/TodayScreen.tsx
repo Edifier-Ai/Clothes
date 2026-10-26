@@ -619,7 +619,7 @@ export default function TodayScreen({
             <EmptyStateCard
               eyebrow="01"
               title="先整理 12 件常穿衣物"
-              description="录入 6 件即可预览第一套搭配，录满 12 件解锁可解释推荐。照片默认保存在本机；仅在你明确同意使用腾讯云抠图时，所选照片才会上传处理，原图不会被覆盖。"
+              description="录入 6 件即可预览第一套搭配，录满 12 件解锁可解释推荐。照片默认保存在本机并在手机本地抠图；仅在你明确同意使用腾讯云抠图时，所选照片才会上传处理，原图不会被覆盖。"
               actionLabel="开始整理衣橱"
               actionHint="打开添加衣物"
               onAction={() => router.push('/add-garment')}
