@@ -536,7 +536,7 @@ export default function BatchImportScreen() {
       ) : null}
 
       <Text style={styles.note}>
-        说明：抠图使用腾讯云数据万象 GoodsMatting；App 在处理完成后请求删除 COS 暂存对象，云服务处理受腾讯条款约束。
+        说明：默认在手机本地抠图，照片不离开设备；只有配置腾讯云并同意上传告知后才改用云端。
         失败可重试或跳过，不阻塞衣物入库；杀进程后重启，已提交任务不重做，剩余任务恢复。
       </Text>
     </ScrollView>
