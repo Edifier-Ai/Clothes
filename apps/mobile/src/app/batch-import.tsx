@@ -8,6 +8,7 @@ import { hitTarget, palette, radius, spacing, typography } from '@/design-system
 import { openAppDb } from '@/core/db/expoDb';
 import {
   addOriginalOnly,
+  categorizeGarment,
   countNetworkPending,
   enqueueBatch,
   ensureDirs,
@@ -35,6 +36,8 @@ import {
   type CutoutQueueItem,
 } from '@/core/db/queue';
 import { writeMirror } from '@/core/garments/mirror';
+import { GARMENT_CATEGORIES, GARMENT_CATEGORY_LABEL } from '@/core/garments/categories';
+import type { GarmentCategory } from '@/core/db/schema';
 import {
   createCameraCapture,
   editorRouteFor,
@@ -159,15 +162,19 @@ export default function BatchImportScreen() {
     setBusy(true);
     try {
       setStatus(`${source}照片入队中…`);
-      await enqueueBatch(app, picked);
+      const { garmentIds } = await enqueueBatch(app, picked);
       await refreshQueue(app);
       setStatus(cloudReady ? '云端抠图处理中…' : '手机本地抠图中…');
       const blocked = await runQueue(app);
-      setStatus(
-        blocked
-          ? `已保存 ${picked.length} 张，但抠图暂时无法进行（${blocked}）。照片不会丢，可稍后点「继续处理」。`
-          : `已处理 ${picked.length} 张，成功项请逐件审核。`,
-      );
+      if (blocked) {
+        setStatus(`已保存 ${picked.length} 张，但抠图暂时无法进行（${blocked}）。照片不会丢，可稍后点「继续处理」。`);
+      } else {
+        // 直接打开本批第一件的审核卡片：看一眼抠图、点一下类别，逐件过完。
+        const latest = await listAll(app.drizzleDb);
+        const first = latest.find((item) => item.job.status === 'succeeded' && garmentIds.includes(item.job.garmentId));
+        if (first) setReviewJobId(first.job.id);
+        setStatus(`已处理 ${picked.length} 张。逐件看一眼抠图，点一下它是什么就好。`);
+      }
     } catch (error) {
       setStatus(`导入失败：${error instanceof Error ? error.message : String(error)}。原图不会被覆盖。`);
     } finally {
@@ -261,6 +268,14 @@ export default function BatchImportScreen() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /** 审核卡片上点选类别：立即保存；占位名同时换成自动名。 */
+  const pickCategory = async (item: CutoutQueueItem, category: GarmentCategory) => {
+    const app = appRef.current;
+    if (!app) return;
+    await categorizeGarment(app, item.job.garmentId, category);
+    await refreshQueue(app);
   };
 
   const acceptReview = (item: CutoutQueueItem) => {
@@ -443,6 +458,61 @@ export default function BatchImportScreen() {
         </View>
       ) : null}
 
+      {reviewItem ? (
+        <View style={styles.reviewCard}>
+          <Text style={styles.sectionTitle}>审核 · {reviewItem.garmentName}</Text>
+          <Text style={styles.cardHint}>先对比原图与透明预览。效果满意就接受；边缘有缺口或残留再进入修边。</Text>
+          <Text style={styles.compareLabel}>这件是：</Text>
+          <View style={styles.categoryRow}>
+            {GARMENT_CATEGORIES.map((c) => {
+              const active = reviewItem.garmentCategory === c.value;
+              return (
+                <Pressable
+                  key={c.value}
+                  accessibilityRole="button"
+                  accessibilityLabel={`归为${c.label}`}
+                  accessibilityState={{ selected: active }}
+                  onPress={() => void pickCategory(reviewItem, c.value)}
+                  style={[styles.categoryChip, active && styles.categoryChipActive]}
+                >
+                  <Text style={[styles.categoryChipLabel, active && styles.categoryChipLabelActive]}>{c.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.compareRow}>
+            <View style={styles.compareCell}>
+              <Text style={styles.compareLabel}>原图</Text>
+              <Image
+                accessibilityLabel="审核原图"
+                source={{ uri: fileUri(rootAbs(), reviewItem.originalRelPath ?? reviewItem.job.originalRelPath) ?? '' }}
+                style={styles.compareImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.compareCell}>
+              <Text style={styles.compareLabel}>抠图预览</Text>
+              <Image
+                accessibilityLabel="抠图预览"
+                source={{ uri: fileUri(rootAbs(), reviewItem.job.previewRelPath) ?? '' }}
+                style={styles.compareImage}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => acceptReview(reviewItem)} style={styles.btn}>
+            <Text style={styles.btnLabel}>接受效果{reviewNextId ? '并审核下一件' : ''}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push(editorRouteFor(reviewItem, reviewNextId))}
+            style={styles.btnGhost}
+          >
+            <Text style={styles.btnGhostLabel}>进入修边</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {items.length > 0 ? (
         <View style={styles.queueSection}>
           <Text style={styles.sectionTitle}>逐件处理</Text>
@@ -463,6 +533,7 @@ export default function BatchImportScreen() {
                 <View style={styles.queueBody}>
                   <Text style={styles.itemName}>{item.garmentName}</Text>
                   <Text style={[styles.itemStatus, succeeded && styles.itemStatusReady]}>
+                    {GARMENT_CATEGORY_LABEL[item.garmentCategory as GarmentCategory] ?? '其他'} ·{' '}
                     {reviewedJobIds.has(item.job.id) ? '已审核' : QUEUE_STATUS_LABEL[item.job.status] ?? '未知状态'}
                   </Text>
                   {item.job.errorMessage ? (
@@ -495,43 +566,6 @@ export default function BatchImportScreen() {
               </View>
             );
           })}
-        </View>
-      ) : null}
-
-      {reviewItem ? (
-        <View style={styles.reviewCard}>
-          <Text style={styles.sectionTitle}>审核 · {reviewItem.garmentName}</Text>
-          <Text style={styles.cardHint}>先对比原图与透明预览。效果满意就接受；边缘有缺口或残留再进入修边。</Text>
-          <View style={styles.compareRow}>
-            <View style={styles.compareCell}>
-              <Text style={styles.compareLabel}>原图</Text>
-              <Image
-                accessibilityLabel="审核原图"
-                source={{ uri: fileUri(rootAbs(), reviewItem.originalRelPath ?? reviewItem.job.originalRelPath) ?? '' }}
-                style={styles.compareImage}
-                resizeMode="contain"
-              />
-            </View>
-            <View style={styles.compareCell}>
-              <Text style={styles.compareLabel}>抠图预览</Text>
-              <Image
-                accessibilityLabel="抠图预览"
-                source={{ uri: fileUri(rootAbs(), reviewItem.job.previewRelPath) ?? '' }}
-                style={styles.compareImage}
-                resizeMode="contain"
-              />
-            </View>
-          </View>
-          <Pressable accessibilityRole="button" onPress={() => acceptReview(reviewItem)} style={styles.btn}>
-            <Text style={styles.btnLabel}>接受效果{reviewNextId ? '并审核下一件' : ''}</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.push(editorRouteFor(reviewItem, reviewNextId))}
-            style={styles.btnGhost}
-          >
-            <Text style={styles.btnGhostLabel}>进入修边</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -590,6 +624,11 @@ const styles = StyleSheet.create({
   skipLabel: { ...typography.bodySm, color: palette.danger },
   reviewCard: { marginTop: spacing.lg, paddingVertical: spacing.lg, borderTopWidth: 1, borderTopColor: palette.charcoal },
   compareRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.md },
+  categoryChip: { minHeight: hitTarget.min, paddingHorizontal: spacing.md, justifyContent: 'center', borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline, backgroundColor: palette.white },
+  categoryChipActive: { backgroundColor: palette.oxblood, borderColor: palette.oxblood },
+  categoryChipLabel: { ...typography.bodySm, color: palette.charcoal },
+  categoryChipLabelActive: { color: palette.white },
   compareCell: { flex: 1 },
   compareLabel: { ...typography.caption, color: palette.charcoalSoft, marginBottom: spacing.xs },
   compareImage: { width: '100%', aspectRatio: 0.8, backgroundColor: palette.sandSoft, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.hairline },

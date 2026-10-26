@@ -8,8 +8,8 @@
  */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { enqueueBatch } from './cutoutService';
-import { garmentAssets, garments } from '../db/schema';
+import { categorizeGarment, enqueueBatch, enqueueGarmentCutout } from './cutoutService';
+import { cutoutJobs, garmentAssets, garments, garmentTags, maskStrokes } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { openQueueTestDb, type QueueTestDb } from '../db/queueTestHelper';
 
@@ -153,5 +153,61 @@ describe('enqueueBatch：入队即完整入库（原图 + asset 行 + pending �
     // 再次入队同图（新 gid）不影响；直接验证同 gid 场景由 copyOriginalIfAbsent 语义保证，
     // 这里验证 enqueueBatch 自身：已存在的 originals 文件内容保持
     expect(mockFiles.get(key)).toBe('b3JpZ2luYWwtdW50b3VjaGVk');
+  });
+});
+
+describe('导入后归类 / 补抠图', () => {
+  it('enqueueBatch 带类别时直接用类别名命名', async () => {
+    mockFiles.set('file:///picked/s.png', 'cGljay0x');
+    const res = await enqueueBatch(app() as never, [{ uri: 'file:///picked/s.png', ext: 'png', category: 'shoes' }]);
+    const g = t.db.select().from(garments).where(eq(garments.id, res.garmentIds[0])).get();
+    expect(g!.category).toBe('shoes');
+    expect(g!.name).toBe('鞋');
+  });
+
+  it('categorizeGarment：改类别；占位名换成「主色+类别」，用户起的名不动', async () => {
+    mockFiles.set('file:///picked/a.png', 'cGljay0x');
+    mockFiles.set('file:///picked/b.png', 'cGljay0y');
+    const res = await enqueueBatch(app() as never, [
+      { uri: 'file:///picked/a.png', ext: 'png' },
+      { uri: 'file:///picked/b.png', ext: 'png' },
+    ]);
+    const [a, b] = res.garmentIds;
+    t.db.insert(garmentTags).values({ id: `${a}-c`, garmentId: a, kind: 'color', value: '藏青', confidence: 1 }).run();
+    t.db.update(garments).set({ name: '妈妈送的裤子' }).where(eq(garments.id, b)).run();
+
+    await categorizeGarment(app() as never, a, 'bottom');
+    await categorizeGarment(app() as never, b, 'bottom');
+
+    const ga = t.db.select().from(garments).where(eq(garments.id, a)).get()!;
+    const gb = t.db.select().from(garments).where(eq(garments.id, b)).get()!;
+    expect(ga).toMatchObject({ category: 'bottom', name: '藏青下装' });
+    expect(gb).toMatchObject({ category: 'bottom', name: '妈妈送的裤子' });
+    // 只改类别，不丢已有标签
+    expect(t.db.select().from(garmentTags).where(eq(garmentTags.garmentId, a)).all()).toHaveLength(1);
+  });
+
+  it('enqueueGarmentCutout：复制原图到暂存区入队，原图不动；重抠清空旧笔画；未完成时去重', async () => {
+    mockFiles.set('file:///picked/o.jpg', 'b3JpZw==');
+    const res = await enqueueBatch(app() as never, [{ uri: 'file:///picked/o.jpg', ext: 'jpg' }]);
+    const gid = res.garmentIds[0];
+    // 模拟第一轮已完成、留下修边笔画
+    t.db.update(cutoutJobs).set({ status: 'succeeded' }).where(eq(cutoutJobs.garmentId, gid)).run();
+    t.db
+      .insert(maskStrokes)
+      .values({ id: 's1', garmentId: gid, ord: 0, op: 'erase', brushSize: 10, pointsJson: '[]', createdAt: 1 })
+      .run();
+
+    const first = await enqueueGarmentCutout(app() as never, gid);
+    expect(first.deduped).toBe(false);
+    const job = t.db.select().from(cutoutJobs).where(eq(cutoutJobs.id, first.jobId)).get()!;
+    expect(job.status).toBe('pending');
+    expect(job.sourceStagedPath).toBe(`file:///mock/clothes/_staging/${first.jobId}.jpg`);
+    expect(mockFiles.get(job.sourceStagedPath!)).toBe('b3JpZw==');
+    expect(mockFiles.get(`file:///mock/clothes/originals/${gid}.jpg`)).toBe('b3JpZw==');
+    expect(t.db.select().from(maskStrokes).where(eq(maskStrokes.garmentId, gid)).all()).toHaveLength(0);
+
+    const again = await enqueueGarmentCutout(app() as never, gid);
+    expect(again).toEqual({ jobId: first.jobId, deduped: true });
   });
 });

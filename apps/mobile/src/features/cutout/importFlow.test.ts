@@ -13,6 +13,7 @@ import {
 function queueItem(jobId: string, garmentId: string, status = 'succeeded'): CutoutQueueItem {
   return {
     garmentName: garmentId,
+    garmentCategory: 'top',
     originalRelPath: `originals/${garmentId}.png`,
     job: {
       id: jobId,

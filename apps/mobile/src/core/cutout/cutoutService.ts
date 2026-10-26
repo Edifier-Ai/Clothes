@@ -2,8 +2,10 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { AppDb } from '../db/expoDb';
-import { garmentAssets, garments } from '../db/schema';
-import { enqueue, listByStatus, requeueFailed } from '../db/queue';
+import { updateGarment } from '../db/dao';
+import { garmentAssets, garments, type GarmentCategory } from '../db/schema';
+import { deleteAllStrokes, enqueue, listByStatus, requeueFailed } from '../db/queue';
+import { autoGarmentName, isPlaceholderName } from '../garments/categories';
 import { normalizeExifOrientation } from '../files/exif';
 import { devicePixelReader } from './devicePixelReader';
 import { makeDeviceIO } from './deviceIO';
@@ -39,6 +41,8 @@ export interface PickedForBatch {
   ext: string;
   /** 可选预计算哈希（去重用） */
   sha256?: string;
+  /** 已知类别（如引导页按类别选图）；缺省为上装，导入后在审核卡片里改。 */
+  category?: GarmentCategory;
 }
 
 export interface EnqueuedBatch {
@@ -79,8 +83,8 @@ export async function enqueueBatch(app: AppDb, picked: PickedForBatch[]): Promis
       const dim = await FileSystem.getInfoAsync(originalAbs);
       await app.drizzleDb.insert(garments).values({
         id: gid,
-        name: `衣物 ${i + 1}`,
-        category: 'top',
+        name: p.category ? autoGarmentName(p.category) : `衣物 ${i + 1}`,
+        category: p.category ?? 'top',
         status: 'clean',
         priceMinor: null,
         currency: null,
@@ -113,6 +117,46 @@ export async function enqueueBatch(app: AppDb, picked: PickedForBatch[]): Promis
   }
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
   return { garmentIds, jobIds };
+}
+
+/**
+ * 给已入库衣物（重新）抠图：把私有原图复制到暂存区并入队，原图本身不动。
+ * 用于原图入库的衣物补抠图、或对效果不满意的衣物重抠；重抠会清空旧的修边笔画（它们是画在旧蒙版上的）。
+ * 已有未完成任务时去重，不重复入队。
+ */
+export async function enqueueGarmentCutout(app: AppDb, garmentId: string): Promise<{ jobId: string; deduped: boolean }> {
+  const asset = await app.db.getAssetByGarment(garmentId);
+  if (!asset) throw new Error('找不到这件衣物的原图');
+  await ensureDirs();
+  const ext = asset.originalRelPath.split('.').pop() ?? 'jpg';
+  const jid = uuidv7();
+  const stagedAbs = `${rootAbs()}/_staging/${jid}.${ext}`;
+  await FileSystem.copyAsync({ from: `${rootAbs()}/${asset.originalRelPath}`, to: stagedAbs });
+  const r = await enqueue(app.drizzleDb, { id: jid, garmentId, sourceStagedPath: stagedAbs, sha256: asset.sha256, now: Date.now() });
+  if (r.deduped) {
+    await FileSystem.deleteAsync(stagedAbs, { idempotent: true }).catch(() => undefined);
+  } else {
+    await deleteAllStrokes(app.drizzleDb, garmentId);
+  }
+  await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
+  return { jobId: r.id, deduped: r.deduped };
+}
+
+/**
+ * 导入后快速归类：改类别；名字还是系统占位名（「衣物 3」）时顺手改成「藏青上装」这类自动名。
+ * 用户自己起过的名字不动。
+ */
+export async function categorizeGarment(app: AppDb, garmentId: string, category: GarmentCategory): Promise<void> {
+  const garment = await app.db.getGarment(garmentId);
+  if (!garment) return;
+  const color = (await app.db.getTagsByGarment(garmentId)).find((t) => t.kind === 'color')?.value ?? null;
+  await updateGarment(
+    app.db,
+    garmentId,
+    { category, ...(isPlaceholderName(garment.name) ? { name: autoGarmentName(category, color) } : {}) },
+    Date.now(),
+  );
+  await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
 }
 
 /**

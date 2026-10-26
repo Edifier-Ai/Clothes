@@ -47,6 +47,8 @@ export interface SucceededData {
 export interface CutoutQueueItem {
   job: CutoutJobRow;
   garmentName: string;
+  /** 衣物当前类别（批量导入审核时可就地改）。 */
+  garmentCategory: string;
   originalRelPath: string | null;
 }
 
@@ -194,6 +196,7 @@ export async function listAll(db: AnyDb): Promise<CutoutQueueItem[]> {
     result.push({
       job,
       garmentName: garment?.name ?? '未命名衣物',
+      garmentCategory: garment?.category ?? 'other',
       originalRelPath: asset?.originalRelPath ?? null,
     });
   }

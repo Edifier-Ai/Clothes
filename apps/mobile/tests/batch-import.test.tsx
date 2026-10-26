@@ -19,13 +19,14 @@ const SNAP_ZERO: QueueSnapshot = { pending: 0, running: 0, succeeded: 0, failed:
 
 const mockEnqueueBatch = jest.fn(async (..._args: unknown[]) => ({ garmentIds: ['g1'], jobIds: ['j1'] }));
 const mockAddOriginalOnly = jest.fn(async (..._args: unknown[]) => 'g1');
+const mockCategorize = jest.fn(async (..._args: unknown[]) => undefined);
 const mockGetSnapshot = jest.fn(async () => SNAP_ZERO);
 const mockCountNetworkPending = jest.fn(async () => 0);
 type MockResult = { processed: number; blockedReason: string | null };
 const OK_RESULT: MockResult = { processed: 0, blockedReason: null };
 const mockStartProcessing = jest.fn(async (): Promise<MockResult> => OK_RESULT);
 const mockRetryFailed = jest.fn(async (): Promise<MockResult> => OK_RESULT);
-const mockListAll = jest.fn(async (..._args: unknown[]) => []);
+const mockListAll = jest.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
 const mockCancel = jest.fn(async (..._args: unknown[]) => undefined);
 const mockRouterPush = jest.fn((..._args: unknown[]) => undefined);
 const mockRequestCameraPermission = jest.fn(async (..._args: unknown[]) => ({ granted: true }));
@@ -44,6 +45,7 @@ jest.mock('expo-image-picker', () => ({
 jest.mock('@/core/cutout/cutoutService', () => ({
   enqueueBatch: (...args: unknown[]) => mockEnqueueBatch(...args),
   addOriginalOnly: (...args: unknown[]) => mockAddOriginalOnly(...args),
+  categorizeGarment: (...args: unknown[]) => mockCategorize(...args),
   ensureDirs: async () => {},
   restoreOnBoot: async () => false,
   getSnapshot: () => mockGetSnapshot(),
@@ -285,5 +287,55 @@ describe('batch-import：已配置已同意', () => {
     await waitFor(() => expect(screen.getByText(/失败可重试：/)).toBeOnTheScreen());
     fireEvent.press(screen.getByRole('button', { name: '重试失败项' }));
     await waitFor(() => expect(mockRetryFailed).toHaveBeenCalledTimes(1));
+  });
+});
+
+function succeededItem(garmentId: string, category = 'top', name = '衣物 1') {
+  return {
+    garmentName: name,
+    garmentCategory: category,
+    originalRelPath: `originals/${garmentId}.jpg`,
+    job: {
+      id: `j-${garmentId}`,
+      garmentId,
+      status: 'succeeded',
+      attempts: 1,
+      errorCode: null,
+      errorMessage: null,
+      sourceStagedPath: null,
+      originalRelPath: `originals/${garmentId}.png`,
+      maskRelPath: `masks/${garmentId}.png`,
+      previewRelPath: `previews/${garmentId}.png`,
+      thumbnailRelPath: `thumbnails/${garmentId}.png`,
+      width: 10,
+      height: 10,
+      sha256: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  };
+}
+
+describe('batch-import：导入后快速归类', () => {
+  it('处理完自动打开本批第一件的审核卡片；点类别即保存', async () => {
+    launchPicker.mockResolvedValue(PICK_ONE);
+    mockEnqueueBatch.mockResolvedValue({ garmentIds: ['g1'], jobIds: ['j-g1'] });
+    await renderLoaded();
+    mockListAll.mockResolvedValue([succeededItem('g1')]);
+    fireEvent.press(screen.getByRole('button', { name: '从相册批量选择' }));
+    await waitFor(() => expect(screen.getByText('审核 · 衣物 1')).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '归为上装', selected: true })).toBeOnTheScreen();
+
+    mockListAll.mockResolvedValue([succeededItem('g1', 'bottom', '下装')]);
+    fireEvent.press(screen.getByRole('button', { name: '归为下装' }));
+    await waitFor(() => expect(mockCategorize).toHaveBeenCalledWith(expect.anything(), 'g1', 'bottom'));
+    await waitFor(() => expect(screen.getByText('审核 · 下装')).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '归为下装', selected: true })).toBeOnTheScreen();
+  });
+
+  it('列表行显示类别', async () => {
+    mockListAll.mockResolvedValue([succeededItem('g9', 'shoes', '鞋')]);
+    await renderLoaded();
+    await waitFor(() => expect(screen.getByText(/鞋 · /)).toBeOnTheScreen());
   });
 });
