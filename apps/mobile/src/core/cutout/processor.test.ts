@@ -6,7 +6,8 @@ import { PNG } from 'pngjs';
 
 import { claimNext, enqueue } from '../db/queue';
 import { openQueueTestDb } from '../db/queueTestHelper';
-import { garments } from '../db/schema';
+import { garments, garmentTags } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import type { SegmentationEngine, SegmentationOutput } from '../../native/segmentationEngine';
 import type { PipelineIO } from './pipelineCore';
 import { drain, getJob, recover, snapshot } from './processor';
@@ -105,6 +106,24 @@ describe('队列处理器', () => {
     expect(final.succeeded).toBe(3);
     expect(final.pending).toBe(0);
     expect(snaps[snaps.length - 1]).toBe(3);
+    t.close();
+  });
+
+  it('抠图成功后自动记录主色标签；用户已填的颜色不覆盖', async () => {
+    const t = openQueueTestDb();
+    const io = memIO();
+    io._seedSource?.(srcPng());
+    await seed(t.db, 'g1');
+    await seed(t.db, 'g2');
+    t.db.insert(garmentTags).values({ id: 'g2-c', garmentId: 'g2', kind: 'color', value: '酒红', confidence: 1 }).run();
+    await enqueue(t.db, { id: 'j1', garmentId: 'g1', sourceStagedPath: '/m/_src', now: 1 });
+    await enqueue(t.db, { id: 'j2', garmentId: 'g2', sourceStagedPath: '/m/_src', now: 2 });
+    await drain({ db: t.db, engine: new FakeEngine(), io, extForJob: () => 'png' });
+
+    const auto = t.db.select().from(garmentTags).where(eq(garmentTags.garmentId, 'g1')).all();
+    expect(auto).toEqual([expect.objectContaining({ kind: 'color', value: '红色', confidence: 0.6 })]);
+    const manual = t.db.select().from(garmentTags).where(eq(garmentTags.garmentId, 'g2')).all();
+    expect(manual).toEqual([expect.objectContaining({ value: '酒红', confidence: 1 })]);
     t.close();
   });
 

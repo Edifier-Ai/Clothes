@@ -10,6 +10,7 @@ import {
   markSucceeded,
   recoverRunning,
   requeuePending,
+  setAutoColorTagIfAbsent,
   type JobStatus,
 } from '../db/queue';
 import type { SegmentationEngine } from '../../native/segmentationEngine';
@@ -104,6 +105,10 @@ export async function drain(deps: ProcessorDeps): Promise<number> {
       });
       await markSucceeded(deps.db, job.id, derived, Date.now());
       processed++;
+      if (derived.dominantColor) {
+        // 主色是附加信息，写不进去不能把已成功的抠图拖成失败。
+        await setAutoColorTagIfAbsent(deps.db, job.garmentId, derived.dominantColor).catch(() => undefined);
+      }
     } catch (e) {
       const code = e instanceof Error ? e.name || 'ERROR' : 'ERROR';
       if (isTransient(e)) {

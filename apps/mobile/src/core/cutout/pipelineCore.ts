@@ -5,6 +5,7 @@
  * previews/<id>.png（透明/对比合成）、thumbnails/<id>.png（缩略图）。派生图可由原图+蒙版重建。
  * 原子写：先写 .tmp 再 rename，失败清理 .tmp，绝不留下半文件。
  */
+import { dominantColor } from './dominantColor';
 
 export interface PipelineIO {
   readBytes(path: string): Promise<Uint8Array>;
@@ -33,6 +34,8 @@ export interface DerivedPaths {
   thumbnailRelPath: string;
   width: number;
   height: number;
+  /** 前景主色（配色规则认得的中文色名）；前景太少或计算失败为 null。 */
+  dominantColor?: string | null;
 }
 
 /** 生成透明棋盘合成预览 RGBA（蒙版作用于原图）。 */
@@ -116,6 +119,13 @@ export async function produceDerived(io: PipelineIO, input: ProduceInput): Promi
   const alphaFull = resizeNearestAlpha(input.alpha, input.maskW, input.maskH, ow, oh);
   const previewRgba = compositePreview(origRgba, alphaFull, ow, oh, false);
   const thumbRgba = resizeNearest(origRgba, ow, oh, input.thumbSize, input.thumbSize);
+  // 主色只是锦上添花：任何异常都不能让抠图失败。
+  let color: string | null = null;
+  try {
+    color = dominantColor(origRgba, alphaFull, ow, oh);
+  } catch {
+    color = null;
+  }
 
   const maskPng = await io.encodeAlphaPng(input.alpha, input.maskW, input.maskH);
   const previewPng = await io.encodePng(previewRgba, ow, oh);
@@ -138,7 +148,7 @@ export async function produceDerived(io: PipelineIO, input: ProduceInput): Promi
     await io.deleteTmp(tmpThumb).catch(() => undefined);
     throw e;
   }
-  return { originalRelPath: originalRel, maskRelPath: maskRel, previewRelPath: previewRel, thumbnailRelPath: thumbRel, width: ow, height: oh };
+  return { originalRelPath: originalRel, maskRelPath: maskRel, previewRelPath: previewRel, thumbnailRelPath: thumbRel, width: ow, height: oh, dominantColor: color };
 }
 
 function asBytes(u: Uint8Array | Promise<Uint8Array>): Uint8Array {

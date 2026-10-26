@@ -6,6 +6,7 @@ import * as schema from './schema';
 import {
   cutoutJobs,
   garmentAssets,
+  garmentTags,
   garments,
   maskStrokes,
   type CutoutJobRow,
@@ -201,6 +202,25 @@ export async function listAll(db: AnyDb): Promise<CutoutQueueItem[]> {
     });
   }
   return result;
+}
+
+/**
+ * 抠图后自动记录主色：只在衣物还没有颜色标签时写入（用户填的颜色永远优先），置信度 0.6 标明是自动识别。
+ * 返回是否写入。
+ */
+export async function setAutoColorTagIfAbsent(db: AnyDb, garmentId: string, color: string): Promise<boolean> {
+  const existing = (await db.select().from(garmentTags).where(eq(garmentTags.garmentId, garmentId)).all()) as {
+    kind: string;
+  }[];
+  if (existing.some((t) => t.kind === 'color')) return false;
+  await db.insert(garmentTags).values({
+    id: `${garmentId}-tag-color-auto`,
+    garmentId,
+    kind: 'color',
+    value: color,
+    confidence: 0.6,
+  });
+  return true;
 }
 
 export async function clearSourceStaged(db: AnyDb, id: string, now: number): Promise<void> {
