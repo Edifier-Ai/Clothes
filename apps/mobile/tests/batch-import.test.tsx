@@ -21,8 +21,10 @@ const mockEnqueueBatch = jest.fn(async (..._args: unknown[]) => ({ garmentIds: [
 const mockAddOriginalOnly = jest.fn(async (..._args: unknown[]) => 'g1');
 const mockGetSnapshot = jest.fn(async () => SNAP_ZERO);
 const mockCountNetworkPending = jest.fn(async () => 0);
-const mockStartProcessing = jest.fn(async () => 0);
-const mockRetryFailed = jest.fn(async () => 0);
+type MockResult = { processed: number; blockedReason: string | null };
+const OK_RESULT: MockResult = { processed: 0, blockedReason: null };
+const mockStartProcessing = jest.fn(async (): Promise<MockResult> => OK_RESULT);
+const mockRetryFailed = jest.fn(async (): Promise<MockResult> => OK_RESULT);
 const mockListAll = jest.fn(async (..._args: unknown[]) => []);
 const mockCancel = jest.fn(async (..._args: unknown[]) => undefined);
 const mockRouterPush = jest.fn((..._args: unknown[]) => undefined);
@@ -84,6 +86,8 @@ beforeEach(() => {
   mockListAll.mockResolvedValue([]);
   mockRequestCameraPermission.mockResolvedValue({ granted: true });
   mockLaunchCamera.mockResolvedValue({ canceled: true, assets: null });
+  mockStartProcessing.mockResolvedValue(OK_RESULT);
+  mockRetryFailed.mockResolvedValue(OK_RESULT);
 });
 
 async function renderLoaded() {
@@ -118,6 +122,19 @@ describe('batch-import：默认本地抠图（未配置云端）', () => {
     expect(mockEnqueueBatch).toHaveBeenCalledWith(expect.anything(), [{ uri: 'file:///a.jpg', ext: 'jpg' }]);
     expect(mockStartProcessing).toHaveBeenCalled();
     expect(await hasUploadConsent()).toBe(false);
+  });
+
+  it('本地模型加载失败 → 不报「已处理」，显示原因并保留 pending 可继续', async () => {
+    launchPicker.mockResolvedValue(PICK_ONE);
+    mockStartProcessing.mockResolvedValue({ processed: 0, blockedReason: '本地抠图模型加载失败：native module missing' });
+    mockGetSnapshot.mockResolvedValue(SNAP_ZERO);
+    await renderLoaded();
+    mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 1, total: 1 });
+    fireEvent.press(screen.getByRole('button', { name: '从相册批量选择' }));
+    await waitFor(() => expect(screen.getByText(/抠图暂时无法进行/)).toBeOnTheScreen());
+    expect(screen.queryByText(/已处理 1 张/)).toBeNull();
+    expect(screen.getByText(/抠图暂停：本地抠图模型加载失败/)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '继续处理' })).toBeOnTheScreen();
   });
 
   it('「仅导入原图（不抠图）」→ addOriginalOnly 入库，不入队不抠图', async () => {

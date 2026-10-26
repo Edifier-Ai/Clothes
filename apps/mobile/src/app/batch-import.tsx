@@ -72,6 +72,8 @@ export default function BatchImportScreen() {
   const [form, setForm] = useState<TencentCiConfig>(EMPTY_FORM);
   const [formError, setFormError] = useState('');
   const cloudReady = configured === true && consent;
+  /** 抠图引擎不可用原因（如本地模型加载失败）；任务保持 pending，修复后可「继续处理」。 */
+  const [engineIssue, setEngineIssue] = useState<string | null>(null);
   const appRef = useRef<App | null>(null);
 
   const refreshQueue = useCallback(async (app: App) => {
@@ -80,9 +82,12 @@ export default function BatchImportScreen() {
     setItems(await listAll(app.drizzleDb));
   }, []);
 
+  /** 跑队列；返回引擎不可用原因（null = 正常处理），并同步到页面提示。 */
   const runQueue = useCallback(async (app: App) => {
-    await startProcessing(app, (s) => setSnap(s));
+    const { blockedReason } = await startProcessing(app, (s) => setSnap(s));
+    setEngineIssue(blockedReason);
     await refreshQueue(app);
+    return blockedReason;
   }, [refreshQueue]);
 
   useEffect(() => {
@@ -157,8 +162,12 @@ export default function BatchImportScreen() {
       await enqueueBatch(app, picked);
       await refreshQueue(app);
       setStatus(cloudReady ? '云端抠图处理中…' : '手机本地抠图中…');
-      await runQueue(app);
-      setStatus(`已处理 ${picked.length} 张，成功项请逐件审核。`);
+      const blocked = await runQueue(app);
+      setStatus(
+        blocked
+          ? `已保存 ${picked.length} 张，但抠图暂时无法进行（${blocked}）。照片不会丢，可稍后点「继续处理」。`
+          : `已处理 ${picked.length} 张，成功项请逐件审核。`,
+      );
     } catch (error) {
       setStatus(`导入失败：${error instanceof Error ? error.message : String(error)}。原图不会被覆盖。`);
     } finally {
@@ -218,9 +227,10 @@ export default function BatchImportScreen() {
     if (!app) return;
     setBusy(true);
     setStatus('重试处理中…');
-    await retryFailed(app, (s) => setSnap(s));
+    const { blockedReason } = await retryFailed(app, (s) => setSnap(s));
+    setEngineIssue(blockedReason);
     await refreshQueue(app);
-    setStatus('完成');
+    setStatus(blockedReason ? `抠图暂时无法进行：${blockedReason}` : '完成');
     setBusy(false);
   };
 
@@ -229,8 +239,8 @@ export default function BatchImportScreen() {
     if (!app) return;
     setBusy(true);
     setStatus('继续处理中…');
-    await runQueue(app);
-    setStatus('完成');
+    const blocked = await runQueue(app);
+    setStatus(blocked ? `抠图暂时无法进行：${blocked}` : '完成');
     setBusy(false);
   };
 
@@ -409,6 +419,9 @@ export default function BatchImportScreen() {
           <Text style={styles.cardTitle}>处理进度</Text>
           <Text style={styles.line}>待处理 {snap.pending} · 处理中 {snap.running} · 待审核 {snap.succeeded}</Text>
           <Text style={styles.line}>失败 {snap.failed} · 已跳过 {snap.cancelled} · 共 {snap.total}</Text>
+          {engineIssue && snap.pending > 0 ? (
+            <Text style={styles.error}>抠图暂停：{engineIssue}。{snap.pending} 张已保存，可点「继续处理」重试，或先「仅导入原图」。</Text>
+          ) : null}
           {networkPending > 0 ? (
             <Text style={styles.hint}>断网待重试：{networkPending} 张因网络中断暂停，联网后点「继续处理」。</Text>
           ) : null}
