@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { AppDb } from '../db/expoDb';
 import { updateGarment } from '../db/dao';
 import { garmentAssets, garments, type GarmentCategory } from '../db/schema';
-import { deleteAllStrokes, enqueue, listByStatus, requeueFailed } from '../db/queue';
+import { deleteAllStrokes, enqueue, listByGarment, listByStatus, requeueFailed } from '../db/queue';
 import { autoGarmentName, isPlaceholderName } from '../garments/categories';
 import { normalizeExifOrientation } from '../files/exif';
 import { devicePixelReader } from './devicePixelReader';
@@ -140,6 +140,24 @@ export async function enqueueGarmentCutout(app: AppDb, garmentId: string): Promi
   }
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
   return { jobId: r.id, deduped: r.deduped };
+}
+
+export type GarmentCutoutState =
+  | { kind: 'none' }
+  | { kind: 'pending' }
+  | { kind: 'succeeded' }
+  | { kind: 'failed'; message: string | null };
+
+/** 详情页用：这件衣物最近一次抠图任务的状态（没有任务 = 原图入库，还没抠过）。 */
+export async function getGarmentCutoutState(app: AppDb, garmentId: string): Promise<GarmentCutoutState> {
+  const jobs = await listByGarment(app.drizzleDb, garmentId);
+  if (jobs.length === 0) return { kind: 'none' };
+  const latest = [...jobs].sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (latest.status === 'pending' || latest.status === 'running') return { kind: 'pending' };
+  if (latest.status === 'failed') return { kind: 'failed', message: latest.errorMessage };
+  if (latest.status === 'succeeded') return { kind: 'succeeded' };
+  // 最近一次被跳过：若更早有成功结果，蒙版仍在
+  return jobs.some((j) => j.status === 'succeeded') ? { kind: 'succeeded' } : { kind: 'none' };
 }
 
 /**

@@ -29,6 +29,13 @@ import {
   type GarmentStats,
 } from '@/core/garments/service';
 import type { CreateGarmentInput } from '@/core/db/dao';
+import { openAppDb } from '@/core/db/expoDb';
+import {
+  enqueueGarmentCutout,
+  getGarmentCutoutState,
+  startProcessing,
+  type GarmentCutoutState,
+} from '@/core/cutout/cutoutService';
 import type { GarmentStatusEventRow } from '@/core/db/schema';
 
 const CATEGORIES: { value: CreateGarmentInput['category']; label: string }[] = [
@@ -112,6 +119,9 @@ export default function GarmentDetailScreen() {
   const [history, setHistory] = useState<GarmentStatusEventRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cutout, setCutout] = useState<GarmentCutoutState | null>(null);
+  const [cutoutBusy, setCutoutBusy] = useState(false);
+  const [cutoutNote, setCutoutNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!id) return;
@@ -130,6 +140,10 @@ export default function GarmentDetailScreen() {
     assetExists(d).then((ex) => setView((v) => (v.detail === d ? { ...v, exists: ex } : v)));
     getGarmentStatsById(id).then(setStats);
     getStatusHistory(id).then(setHistory);
+    openAppDb()
+      .then((app) => getGarmentCutoutState(app, id))
+      .then(setCutout)
+      .catch(() => setCutout(null));
   }, [id]);
 
   useFocusEffect(
@@ -201,6 +215,28 @@ export default function GarmentDetailScreen() {
       await reload();
     } catch {
       setError(archived ? '恢复失败，请重试' : '归档失败，请重试');
+    }
+  };
+
+  /** 抠图 / 重新抠图：原图复制进队列，就地跑完（照片不动；重抠会清空旧修边笔画）。 */
+  const runCutout = async () => {
+    if (!id || cutoutBusy) return;
+    setCutoutBusy(true);
+    setCutoutNote('抠图中…');
+    try {
+      const app = await openAppDb();
+      await enqueueGarmentCutout(app, id);
+      const { blockedReason } = await startProcessing(app);
+      const next = await getGarmentCutoutState(app, id);
+      setCutout(next);
+      if (blockedReason) setCutoutNote(`抠图暂时无法进行：${blockedReason}`);
+      else if (next.kind === 'succeeded') setCutoutNote('抠图完成。边缘不理想可以点「修边」。');
+      else if (next.kind === 'failed') setCutoutNote(`抠图失败：${next.message ?? '未知错误'}`);
+      else setCutoutNote(null);
+    } catch (e) {
+      setCutoutNote(`抠图失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCutoutBusy(false);
     }
   };
 
@@ -318,6 +354,42 @@ export default function GarmentDetailScreen() {
             ) : null}
           </View>
 
+          {cutout ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>抠图</Text>
+              <Text style={styles.hint}>
+                {cutout.kind === 'succeeded'
+                  ? '已抠图。效果不满意可以重新抠一次（会清空修边笔画，原图不动）。'
+                  : cutout.kind === 'pending'
+                    ? '在抠图队列里排队。'
+                    : cutout.kind === 'failed'
+                      ? `上次抠图失败${cutout.message ? `：${cutout.message}` : ''}。`
+                      : '这件还没抠图，衣橱和搭配里显示的是原图。'}
+              </Text>
+              {cutoutNote ? <Text style={styles.statLine}>{cutoutNote}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void runCutout()}
+                disabled={cutoutBusy || !exists}
+                style={[styles.archiveBtn, (cutoutBusy || !exists) && styles.disabled]}
+              >
+                {cutoutBusy ? (
+                  <ActivityIndicator color={palette.oxblood} />
+                ) : (
+                  <Text style={styles.archiveBtnText}>
+                    {cutout.kind === 'succeeded'
+                      ? '重新抠图'
+                      : cutout.kind === 'pending'
+                        ? '继续处理'
+                        : cutout.kind === 'failed'
+                          ? '重试抠图'
+                          : '现在抠图'}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* CLS-05：状态流转 */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>
@@ -381,13 +453,15 @@ export default function GarmentDetailScreen() {
             <Pressable accessibilityRole="button" onPress={() => setView((v) => ({ ...v, editing: true }))} style={styles.secondary}>
               <Text style={styles.secondaryLabel}>编辑</Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/cutout-editor', params: { id: id ?? '' } })}
-              style={styles.secondary}
-            >
-              <Text style={styles.secondaryLabel}>修边</Text>
-            </Pressable>
+            {cutout?.kind === 'succeeded' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push({ pathname: '/cutout-editor', params: { id: id ?? '' } })}
+                style={styles.secondary}
+              >
+                <Text style={styles.secondaryLabel}>修边</Text>
+              </Pressable>
+            ) : null}
             <Pressable accessibilityRole="button" onPress={remove} style={styles.danger}>
               <Text style={styles.primaryLabel}>删除</Text>
             </Pressable>
@@ -457,6 +531,7 @@ const styles = StyleSheet.create({
   cardSubtitle: { ...typography.caption, color: palette.charcoalSoft, marginTop: spacing.sm, marginBottom: spacing.xxs },
   statLine: { ...typography.bodySm, color: palette.charcoal, marginTop: spacing.xxs },
   archiveBtn: { marginTop: spacing.sm, minHeight: hitTarget.min, justifyContent: 'center' },
+  disabled: { opacity: 0.5 },
   archiveBtnText: { ...typography.bodySm, color: palette.oxblood },
   errorText: { ...typography.bodySm, color: palette.danger, marginTop: spacing.sm },
   actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },

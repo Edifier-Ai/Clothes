@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { categorizeGarment, enqueueBatch, enqueueGarmentCutout } from './cutoutService';
+import { categorizeGarment, enqueueBatch, enqueueGarmentCutout, getGarmentCutoutState } from './cutoutService';
 import { cutoutJobs, garmentAssets, garments, garmentTags, maskStrokes } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { openQueueTestDb, type QueueTestDb } from '../db/queueTestHelper';
@@ -209,5 +209,21 @@ describe('导入后归类 / 补抠图', () => {
 
     const again = await enqueueGarmentCutout(app() as never, gid);
     expect(again).toEqual({ jobId: first.jobId, deduped: true });
+  });
+});
+
+describe('getGarmentCutoutState', () => {
+  it('无任务 → none；最新任务决定状态；跳过但更早成功 → succeeded', async () => {
+    mockFiles.set('file:///picked/x.jpg', 'eA==');
+    const res = await enqueueBatch(app() as never, [{ uri: 'file:///picked/x.jpg', ext: 'jpg' }]);
+    const gid = res.garmentIds[0];
+    expect(await getGarmentCutoutState(app() as never, 'nope')).toEqual({ kind: 'none' });
+    expect(await getGarmentCutoutState(app() as never, gid)).toEqual({ kind: 'pending' });
+    t.db.update(cutoutJobs).set({ status: 'failed', errorMessage: 'bad image' }).where(eq(cutoutJobs.garmentId, gid)).run();
+    expect(await getGarmentCutoutState(app() as never, gid)).toEqual({ kind: 'failed', message: 'bad image' });
+    t.db.update(cutoutJobs).set({ status: 'succeeded' }).where(eq(cutoutJobs.garmentId, gid)).run();
+    const again = await enqueueGarmentCutout(app() as never, gid);
+    t.db.update(cutoutJobs).set({ status: 'cancelled', createdAt: Date.now() + 1000 }).where(eq(cutoutJobs.id, again.jobId)).run();
+    expect(await getGarmentCutoutState(app() as never, gid)).toEqual({ kind: 'succeeded' });
   });
 });

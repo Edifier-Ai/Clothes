@@ -22,6 +22,10 @@ const mockSetStatus = jest.fn(async (..._args: unknown[]) => ({ changed: true, f
 const mockArchive = jest.fn(async (..._args: unknown[]) => ({ changed: true, from: 'clean' }));
 const mockUnarchive = jest.fn(async (..._args: unknown[]) => ({ changed: true, from: 'archived' }));
 const mockEdit = jest.fn(async (..._args: unknown[]) => true);
+type MockCutout = { kind: 'none' | 'pending' | 'succeeded' | 'failed'; message?: string | null };
+const mockCutoutState = jest.fn(async (..._args: unknown[]): Promise<MockCutout> => ({ kind: 'succeeded' }));
+const mockEnqueueCutout = jest.fn(async (..._args: unknown[]) => ({ jobId: 'j1', deduped: false }));
+const mockStartProcessing = jest.fn(async (..._args: unknown[]) => ({ processed: 1, blockedReason: null as string | null }));
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 'g-1' }),
@@ -30,6 +34,16 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('expo-image', () => ({ Image: 'Image' }));
+
+jest.mock('@/core/db/expoDb', () => ({
+  openAppDb: jest.fn(async () => ({ db: {}, drizzleDb: {} })),
+}));
+
+jest.mock('@/core/cutout/cutoutService', () => ({
+  getGarmentCutoutState: (...args: unknown[]) => mockCutoutState(...args),
+  enqueueGarmentCutout: (...args: unknown[]) => mockEnqueueCutout(...args),
+  startProcessing: (...args: unknown[]) => mockStartProcessing(...args),
+}));
 
 jest.mock('@/core/garments/service', () => ({
   getGarmentDetail: (...args: unknown[]) => mockGetGarmentDetail(...args),
@@ -92,6 +106,9 @@ beforeEach(() => {
   mockAssetExists.mockResolvedValue(true as never);
   mockGetStats.mockResolvedValue(STATS as never);
   mockGetHistory.mockResolvedValue(HISTORY as never);
+  mockCutoutState.mockResolvedValue({ kind: 'succeeded' });
+  mockEnqueueCutout.mockResolvedValue({ jobId: 'j1', deduped: false });
+  mockStartProcessing.mockResolvedValue({ processed: 1, blockedReason: null });
 });
 
 describe('garment detail：修边入口（IMP-03/04 导航）', () => {
@@ -108,6 +125,44 @@ describe('garment detail：修边入口（IMP-03/04 导航）', () => {
     await waitFor(() => expect(screen.getByText('白 T 恤')).toBeOnTheScreen());
     fireEvent.press(screen.getByRole('button', { name: '编辑' }));
     expect(screen.queryByRole('button', { name: '修边' })).toBeNull();
+  });
+});
+
+describe('garment detail：补抠图 / 重新抠图', () => {
+  it('原图入库（没有抠图任务）：显示「现在抠图」，隐藏「修边」；点击后入队并处理', async () => {
+    mockCutoutState.mockResolvedValue({ kind: 'none' });
+    render(<GarmentDetailScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '现在抠图' })).toBeOnTheScreen());
+    expect(screen.queryByRole('button', { name: '修边' })).toBeNull();
+    mockCutoutState.mockResolvedValue({ kind: 'succeeded' });
+    fireEvent.press(screen.getByRole('button', { name: '现在抠图' }));
+    await waitFor(() => expect(mockEnqueueCutout).toHaveBeenCalledWith(expect.anything(), 'g-1'));
+    expect(mockStartProcessing).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByText(/抠图完成/)).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '修边' })).toBeOnTheScreen();
+  });
+
+  it('已抠图：显示「重新抠图」和「修边」', async () => {
+    mockCutoutState.mockResolvedValue({ kind: 'succeeded' });
+    render(<GarmentDetailScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '重新抠图' })).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '修边' })).toBeOnTheScreen();
+  });
+
+  it('模型不可用：显示原因，不报完成', async () => {
+    mockCutoutState.mockResolvedValue({ kind: 'none' });
+    mockStartProcessing.mockResolvedValue({ processed: 0, blockedReason: '本地抠图模型加载失败：x' });
+    render(<GarmentDetailScreen />);
+    fireEvent.press(await screen.findByRole('button', { name: '现在抠图' }));
+    await waitFor(() => expect(screen.getByText(/抠图暂时无法进行：本地抠图模型加载失败/)).toBeOnTheScreen());
+    expect(screen.queryByText(/抠图完成/)).toBeNull();
+  });
+
+  it('上次失败：显示原因和「重试抠图」', async () => {
+    mockCutoutState.mockResolvedValue({ kind: 'failed', message: 'bad image' });
+    render(<GarmentDetailScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '重试抠图' })).toBeOnTheScreen());
+    expect(screen.getByText(/bad image/)).toBeOnTheScreen();
   });
 });
 
