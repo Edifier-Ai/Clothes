@@ -205,7 +205,7 @@ export default function BatchImportScreen() {
       for (const p of picked) {
         await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
       }
-      setStatus(`已原图入库 ${picked.length} 件；没有抠图，之后可在详情页「修边」补做。`);
+      setStatus(`已原图入库 ${picked.length} 件；没有抠图，衣物以原图展示。`);
     } catch (error) {
       setStatus(`原图导入失败：${error instanceof Error ? error.message : String(error)}。`);
     } finally {
