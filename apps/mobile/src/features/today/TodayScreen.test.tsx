@@ -2,7 +2,7 @@ import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import TodayScreen, { loadTodayItems, type TodayGarment } from './TodayScreen';
-import type { GarmentForRec, Outfit } from '@/core/recommend';
+import { DEFAULT_RECOMMENDATION_FACTORS, type GarmentForRec, type Outfit } from '@/core/recommend';
 import { applyPostWear } from '@/core/garments/service';
 import { palette } from '@/design-system';
 
@@ -138,6 +138,7 @@ describe('TodayScreen（今日页）', () => {
       ),
       loadTags: jest.fn(async () => [
         { garmentId: garment.id, kind: 'color', value: 'ivory' },
+        { garmentId: garment.id, kind: 'season', value: '春秋' },
       ]),
     };
 
@@ -149,6 +150,7 @@ describe('TodayScreen（今日页）', () => {
         displayName: '象牙白真丝衬衫',
         imageRelPath: 'cutouts/thumb-ivory.png',
         color: 'ivory',
+        season: '春秋',
         lastWornAt: 19,
         timesWorn: 7,
       }),
@@ -203,6 +205,37 @@ describe('TodayScreen（今日页）', () => {
     expect(primary).toHaveStyle({ backgroundColor: palette.charcoal, minHeight: 48 });
     expect(primary).toHaveProp('accessibilityHint', '打开记录已穿表单');
     expect(screen.getByLabelText('白色亚麻衬衫图片')).toBeOnTheScreen();
+  });
+
+  it('今天气温：默认按月份估计，改成「热」后重新推荐且不再带外套', async () => {
+    render(
+      <TodayScreen
+        loadItems={async () => twelveItems}
+        loadFeedbackWeights={loadNoFeedback}
+        now={new Date(2026, 0, 15).getTime()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('今日推荐')).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '冷 <10°', selected: true })).toBeOnTheScreen();
+    expect(screen.getByText('外套')).toBeOnTheScreen();
+    expect(screen.getByText(/今天偏凉，加了外套/)).toBeOnTheScreen();
+
+    fireEvent.press(screen.getByRole('button', { name: '热 >26°' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '热 >26°', selected: true })).toBeOnTheScreen());
+    await waitFor(() => expect(screen.queryByText('外套')).toBeNull());
+  });
+
+  it('「天气」要素关闭时不显示气温选择', async () => {
+    render(
+      <TodayScreen
+        loadItems={async () => twelveItems}
+        loadFeedbackWeights={loadNoFeedback}
+        loadRecommendationFactors={async () => ({ ...DEFAULT_RECOMMENDATION_FACTORS, weather: false })}
+        now={2_000_000}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('今日推荐')).toBeOnTheScreen());
+    expect(screen.queryByRole('button', { name: '热 >26°' })).toBeNull();
   });
 
   it('缺鞋时展示缺槽位提示', async () => {

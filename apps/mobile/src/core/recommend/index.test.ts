@@ -191,6 +191,7 @@ describe('可选择的推荐参考要素', () => {
     repeatAvoidance: false,
     feedbackLearning: false,
     heroItem: false,
+    weather: false,
   } as const;
 
   it('关闭久未穿后回到稳定 ID 排序，且不再生成盘活理由', () => {

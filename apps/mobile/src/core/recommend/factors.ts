@@ -5,6 +5,8 @@ export interface RecommendationFactors {
   repeatAvoidance: boolean;
   feedbackLearning: boolean;
   heroItem: boolean;
+  /** 今日气温与衣物季节标签（气温由用户在今日页点选，不联网）。 */
+  weather: boolean;
 }
 
 export type RecommendationFactorOverrides = Partial<RecommendationFactors>;
@@ -16,6 +18,7 @@ export const DEFAULT_RECOMMENDATION_FACTORS: Readonly<RecommendationFactors> = O
   repeatAvoidance: true,
   feedbackLearning: true,
   heroItem: true,
+  weather: true,
 });
 
 /** 未知或损坏字段回退为默认开启，旧安装升级后维持既有推荐行为。 */
@@ -32,5 +35,6 @@ export function resolveRecommendationFactors(
     feedbackLearning:
       typeof input?.feedbackLearning === 'boolean' ? input.feedbackLearning : true,
     heroItem: typeof input?.heroItem === 'boolean' ? input.heroItem : true,
+    weather: typeof input?.weather === 'boolean' ? input.weather : true,
   };
 }

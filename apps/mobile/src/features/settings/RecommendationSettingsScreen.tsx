@@ -26,6 +26,7 @@ const FACTORS: readonly {
   { key: 'repeatAvoidance', title: '避免近期重复', description: '降低最近穿过单品与刚跳过组合的优先级' },
   { key: 'feedbackLearning', title: '反馈偏好', description: '参考你接受、替换和跳过的历史选择' },
   { key: 'heroItem', title: '主角单品', description: '允许换一套时锁定一件主角衣物' },
+  { key: 'weather', title: '天气与季节', description: '按今天选的气温搭配：衣物的季节标签要对得上，冷凉天加外套、热天不加' },
 ];
 
 function FactorRow({

@@ -28,6 +28,7 @@ const preferences: AppPreferences = {
     repeatAvoidance: true,
     feedbackLearning: true,
     heroItem: true,
+    weather: true,
   },
 };
 
@@ -51,22 +52,23 @@ describe('推荐参考要素设置', () => {
     mockPush.mockClear();
   });
 
-  it('展示六项可选要素与不可关闭的硬约束说明', async () => {
+  it('展示七项可选要素与不可关闭的硬约束说明', async () => {
     render(<RecommendationSettingsScreen preferenceService={service()} />);
-    await waitFor(() => expect(screen.getByText('6')).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText('7')).toBeOnTheScreen());
     expect(screen.getByLabelText('参考场合')).toBeOnTheScreen();
     expect(screen.getByLabelText('参考颜色协调')).toBeOnTheScreen();
     expect(screen.getByLabelText('参考久未穿优先')).toBeOnTheScreen();
     expect(screen.getByLabelText('参考避免近期重复')).toBeOnTheScreen();
     expect(screen.getByLabelText('参考反馈偏好')).toBeOnTheScreen();
     expect(screen.getByLabelText('参考主角单品')).toBeOnTheScreen();
+    expect(screen.getByLabelText('参考天气与季节')).toBeOnTheScreen();
     expect(screen.getByText('安全硬约束')).toBeOnTheScreen();
   });
 
   it('关闭配色与主角后一次保存完整选择', async () => {
     const preferenceService = service();
     render(<RecommendationSettingsScreen preferenceService={preferenceService} />);
-    await waitFor(() => expect(screen.getByText('6')).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText('7')).toBeOnTheScreen());
     fireEvent(screen.getByLabelText('参考颜色协调'), 'valueChange', false);
     fireEvent(screen.getByLabelText('参考主角单品'), 'valueChange', false);
     fireEvent.press(screen.getByRole('button', { name: '保存推荐设置' }));
@@ -81,7 +83,7 @@ describe('推荐参考要素设置', () => {
 
   it('设置首页展示启用数量并可进入推荐设置', async () => {
     render(<SettingsScreen preferenceService={service()} />);
-    await waitFor(() => expect(screen.getByText('6/6')).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText('7/7')).toBeOnTheScreen());
     fireEvent.press(screen.getByRole('button', { name: '推荐参考要素' }));
     expect(mockPush).toHaveBeenCalledWith('/settings/recommendations');
   });

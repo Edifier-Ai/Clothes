@@ -22,6 +22,8 @@ import {
   type RecommendationFactorOverrides,
 } from './factors';
 
+import { outerNeed, seasonFit, type TempBand } from './weather';
+
 export {
   DEFAULT_RECOMMENDATION_FACTORS,
   resolveRecommendationFactors,
@@ -49,6 +51,8 @@ export interface GarmentForRec {
   archivedAt?: number | null;
   /** 颜色标签值（来自 garment_tags kind='color'）；null/undefined 表示未录入。 */
   color?: string | null;
+  /** 季节标签值（kind='season'，自由文本如「夏」「春秋」）；未录入为 null/undefined。 */
+  season?: string | null;
 }
 
 export interface Outfit {
@@ -63,6 +67,36 @@ export interface RecContext {
   occasion: RecOccasion | null;
   recentItemIds: readonly string[];
   factors?: RecommendationFactorOverrides;
+  /** 今日气温档位（用户点选）；未提供或关闭「天气」要素时不参与推荐。 */
+  temperature?: TempBand | null;
+}
+
+export { TEMP_BANDS, TEMP_LABEL, defaultBandForMonth, type TempBand } from './weather';
+
+/** 当前上下文下生效的气温档位（要素关闭或未选时为 null）。 */
+export function activeTemperature(ctx: Pick<RecContext, 'factors' | 'temperature'>): TempBand | null {
+  if (!resolveRecommendationFactors(ctx.factors).weather) return null;
+  return ctx.temperature ?? null;
+}
+
+/** 该衣物的季节标签与当前气温明显不搭（标签已填且没有交集）。 */
+export function isSeasonMismatch(item: GarmentForRec, ctx: Pick<RecContext, 'factors' | 'temperature'>): boolean {
+  const band = activeTemperature(ctx);
+  return band != null && seasonFit(item.season, band) === 'mismatch';
+}
+
+/** 天气相关的理由码：仅当真实命中时返回。 */
+export function weatherReasonCodes(outfit: Outfit, ctx: Pick<RecContext, 'factors' | 'temperature'>): string[] {
+  const band = activeTemperature(ctx);
+  if (!band) return [];
+  const pieces = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear].filter(
+    (p): p is GarmentForRec => Boolean(p),
+  );
+  const codes: string[] = [];
+  const fits = pieces.map((p) => seasonFit(p.season, band));
+  if (!fits.includes('mismatch') && fits.includes('fit')) codes.push('WEATHER_FIT');
+  if (outfit.outerwear && outerNeed(band) === 'needed') codes.push('WEATHER_OUTER');
+  return codes;
 }
 
 export type RecResult =
@@ -80,6 +114,10 @@ export function isAvailable(i: GarmentForRec): boolean {
 /** 确定性排序：久未穿（null 最优先）→ 穿过次数少 → id 字典序兜底。 */
 function compareForRec(a: GarmentForRec, b: GarmentForRec, ctx: RecContext): number {
   const factors = resolveRecommendationFactors(ctx.factors);
+  // 季节与今日气温明显不搭的排到后面（只是降权：衣橱里只有它时仍会用）。
+  const aMismatch = isSeasonMismatch(a, ctx);
+  const bMismatch = isSeasonMismatch(b, ctx);
+  if (aMismatch !== bMismatch) return aMismatch ? 1 : -1;
   if (factors.repeatAvoidance) {
     const recent = new Set(ctx.recentItemIds);
     const aRecent = recent.has(a.id);
@@ -230,11 +268,14 @@ export function generateRecommendation(
     return { ok: false, missing };
   }
 
-  // outerwear 可选；当前 Demo 始终由衣橱与场景规则决定，不读取天气。
+  // outerwear 可选：冷/凉天必带、热天不带；暖天交给场景规则（通勤/正式/旅行带）。
   let outerwear: GarmentForRec | undefined;
-  const outerPreferred =
+  const band = activeTemperature(ctx);
+  const need = band ? outerNeed(band) : 'by-occasion';
+  const outerByOccasion =
     factors.occasion &&
     (ctx.occasion === 'commute' || ctx.occasion === 'formal' || ctx.occasion === 'travel');
+  const outerPreferred = need === 'needed' || (need === 'by-occasion' && outerByOccasion);
   if (outerwears.length > 0 && outerPreferred) {
     outerwear = pickBest(outerwears, ctx) ?? undefined;
   }
@@ -265,6 +306,9 @@ export function generateRecommendation(
   // 场景
   const occ = occasionReason(ctx);
   if (occ) codes.push(occ);
+
+  // 天气：季节标签与气温相符 / 冷凉天加外套
+  codes.push(...weatherReasonCodes(outfit, ctx));
 
   // 配色规则（仅当上下装均有颜色数据时命中）
   if (!usedDress) {
@@ -303,6 +347,8 @@ export function topReasons(codes: readonly string[], max = 3): string[] {
   const priority = [
     'COLOR_CLASH_NO_ALT',
     'COLOR_HARMONIOUS',
+    'WEATHER_OUTER',
+    'WEATHER_FIT',
     'MODE_SAFE',
     'MODE_FRESH',
     'MODE_HERO',
@@ -357,5 +403,7 @@ export const REASON_LABEL: Record<string, string> = {
   HERO_LOCKED: '已保留主角单品',
   SLOT_REPLACED: '仅替换了所选单品',
   COLOR_HARMONIOUS: '上下装配色协调',
+  WEATHER_FIT: '季节和今天的气温相符',
+  WEATHER_OUTER: '今天偏凉，加了外套',
   COLOR_CLASH_NO_ALT: '配色略有冲突，暂无更优替代',
 };

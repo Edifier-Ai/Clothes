@@ -66,7 +66,7 @@ export default function SettingsScreen({
           description="自由选择场合、配色、盘活与学习偏好"
           value={
             preferences
-              ? `${Object.values(preferences.recommendationFactors).filter(Boolean).length}/6`
+              ? `${Object.values(preferences.recommendationFactors).filter(Boolean).length}/${Object.keys(preferences.recommendationFactors).length}`
               : '读取中'
           }
           onPress={() => router.push('/settings/recommendations')}

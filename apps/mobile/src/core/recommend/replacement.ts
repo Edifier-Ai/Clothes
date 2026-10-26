@@ -1,11 +1,15 @@
 import {
+  activeTemperature,
   isAvailable,
+  isSeasonMismatch,
+  weatherReasonCodes,
   type GarmentForRec,
   type Outfit,
   type RecContext,
   type RecResult,
 } from './index';
 import { colorsClash } from './colorRules';
+import { outerNeed } from './weather';
 import {
   resolveRecommendationFactors,
   type RecommendationFactorOverrides,
@@ -26,6 +30,8 @@ export interface RegenerateOptions extends ReplacementOptions {
 }
 
 const DAY_MS = 86_400_000;
+/** 季节与气温明显不搭的单品降权幅度：大于久未穿/反馈的常规分差，但仍只是降权。 */
+const SEASON_MISMATCH_PENALTY = 5_000;
 
 function compareIds(a: GarmentForRec, b: GarmentForRec): number {
   return a.id.localeCompare(b.id);
@@ -44,9 +50,10 @@ function modeScore(
       ? 90
       : Math.max(0, (ctx.now - item.lastWornAt) / DAY_MS)
     : 0;
-  if (mode === 'safe') return feedback + item.timesWorn * 30 - staleDays;
-  if (mode === 'fresh' || mode === 'hero') return feedback + staleDays * 10 - item.timesWorn * 30;
-  return feedback - item.timesWorn;
+  const weather = isSeasonMismatch(item, ctx) ? SEASON_MISMATCH_PENALTY : 0;
+  if (mode === 'safe') return feedback + item.timesWorn * 30 - staleDays - weather;
+  if (mode === 'fresh' || mode === 'hero') return feedback + staleDays * 10 - item.timesWorn * 30 - weather;
+  return feedback - item.timesWorn - weather;
 }
 
 function sortCandidates(
@@ -122,7 +129,15 @@ function buildOutfits(items: readonly GarmentForRec[], ctx: RecContext): Outfit[
   const dresses = pool.filter((item) => item.category === 'dress');
   const shoes = pool.filter((item) => item.category === 'shoes');
   const outerwear = pool.filter((item) => item.category === 'outerwear');
-  const outerOptions: (GarmentForRec | undefined)[] = [undefined, ...outerwear];
+  // 气温：热天不带外套；冷/凉天有外套就必带（没有外套才允许空）。
+  const band = activeTemperature(ctx);
+  const need = band ? outerNeed(band) : 'by-occasion';
+  const outerOptions: (GarmentForRec | undefined)[] =
+    need === 'none'
+      ? [undefined]
+      : need === 'needed' && outerwear.length > 0
+        ? [...outerwear]
+        : [undefined, ...outerwear];
   const outfits: Outfit[] = [];
 
   for (const top of tops) {
@@ -171,7 +186,7 @@ export function regenerateOutfit(
   const mergedContext = { ...ctx, factors: options.factors ?? ctx.factors };
   const factors = resolveRecommendationFactors(mergedContext.factors);
   const activeLockedHeroId = factors.heroItem ? options.lockedHeroId : null;
-  let outfits = buildOutfits(items, ctx);
+  let outfits = buildOutfits(items, mergedContext);
   if (activeLockedHeroId) {
     outfits = outfits.filter((outfit) =>
       uniqueItems(outfit).some((item) => item.id === activeLockedHeroId),
@@ -198,6 +213,7 @@ export function regenerateOutfit(
   const reasonCodes = [
     `MODE_${options.mode.toUpperCase()}`,
     ...(factors.occasion && ctx.occasion ? [`OCCASION_${ctx.occasion.toUpperCase()}`] : []),
+    ...weatherReasonCodes(outfit, mergedContext),
     ...(fresh.length > 0 && avoided.size > 0 ? ['REPEAT_SUPPRESSION'] : []),
     ...(activeLockedHeroId ? ['HERO_LOCKED'] : []),
   ];

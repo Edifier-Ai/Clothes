@@ -22,11 +22,15 @@ import {
   generateRecommendation,
   DEFAULT_RECOMMENDATION_FACTORS,
   REASON_LABEL,
+  TEMP_BANDS,
+  TEMP_LABEL,
+  defaultBandForMonth,
   topReasons,
   type GarmentForRec,
   type Outfit,
   type RecResult,
   type RecommendationFactors,
+  type TempBand,
 } from '@/core/recommend';
 import { getAppPreferences, subscribeAppPreferences } from '@/core/preferences';
 import { getWearStats, recordWear } from '@/core/recommend/wearLog';
@@ -95,9 +99,13 @@ export async function loadTodayItems(source?: TodayItemLoadSource): Promise<Toda
     resolved.loadTags(),
   ]);
   const colorByGarment = new Map<string, string>();
+  const seasonByGarment = new Map<string, string>();
   for (const tag of allTags) {
     if (tag.kind === 'color' && !colorByGarment.has(tag.garmentId)) {
       colorByGarment.set(tag.garmentId, tag.value);
+    }
+    if (tag.kind === 'season' && !seasonByGarment.has(tag.garmentId)) {
+      seasonByGarment.set(tag.garmentId, tag.value);
     }
   }
 
@@ -111,6 +119,7 @@ export async function loadTodayItems(source?: TodayItemLoadSource): Promise<Toda
     timesWorn: stats.get(garment.id)?.timesWorn ?? 0,
     archivedAt: garment.archivedAt,
     color: colorByGarment.get(garment.id) ?? null,
+    season: seasonByGarment.get(garment.id) ?? null,
     displayName: garment.name.trim() || CATEGORY_LABEL[garment.category] || '未命名衣物',
     imageRelPath,
   }));
@@ -259,6 +268,8 @@ export default function TodayScreen({
   const [nowVal] = useState(() => now ?? Date.now());
   const [state, setState] = useState<ViewState>({ kind: 'loading' });
   const [occasion, setOccasion] = useState<string>(defaultOccasion);
+  /** 今日气温：默认按月份估计，用户点选后覆盖；「天气」要素关闭时不参与推荐。 */
+  const [temperature, setTemperature] = useState<TempBand>(() => defaultBandForMonth(new Date(now ?? Date.now())));
   const [items, setItems] = useState<GarmentForRec[]>([]);
   const [mode, setMode] = useState<RecommendationMode>('safe');
   const [panel, setPanel] = useState<PanelState>({ kind: 'none' });
@@ -276,8 +287,9 @@ export default function TodayScreen({
       occasion: occasion as 'commute' | 'casual' | 'formal' | 'travel' | 'sport',
       recentItemIds: recentItemIds(items, nowVal),
       factors,
+      temperature,
     }),
-    [factors, items, nowVal, occasion],
+    [factors, items, nowVal, occasion, temperature],
   );
 
   const refresh = useCallback(async () => {
@@ -302,6 +314,7 @@ export default function TodayScreen({
         occasion: occasion as 'commute' | 'casual' | 'formal' | 'travel' | 'sport',
         recentItemIds: recentItemIds(loadedItems, nowVal),
         factors: loadedFactors,
+        temperature,
       });
       if (result.ok) {
         setState({ kind: 'ready', result, outfit: result.outfit });
@@ -314,7 +327,7 @@ export default function TodayScreen({
         message: '衣橱数据没有加载成功。你的衣物仍保存在本机，请重试。',
       });
     }
-  }, [loadFeedbackWeights, loadItems, loadRecommendationFactors, occasion, nowVal]);
+  }, [loadFeedbackWeights, loadItems, loadRecommendationFactors, occasion, nowVal, temperature]);
 
   useEffect(() => {
     // refresh 内部 setState 在 await 之后（异步回调里），非 effect 同步 setState。
@@ -645,6 +658,8 @@ export default function TodayScreen({
             reasonCodes={state.result.ok ? state.result.reasonCodes : []}
             occasion={occasion}
             onChangeOccasion={setOccasion}
+            temperature={factors.weather ? temperature : null}
+            onChangeTemperature={setTemperature}
             mode={mode}
             onReplace={(slot) => openReplace(slot, outfit)}
             onRegenerate={() =>
@@ -800,6 +815,8 @@ function OutfitCard({
   reasonCodes,
   occasion,
   onChangeOccasion,
+  temperature,
+  onChangeTemperature,
   mode,
   onReplace,
   onRegenerate,
@@ -810,6 +827,9 @@ function OutfitCard({
   reasonCodes: string[];
   occasion: string;
   onChangeOccasion: (v: string) => void;
+  /** null = 「天气」要素已关闭，不显示气温选择。 */
+  temperature: TempBand | null;
+  onChangeTemperature: (v: TempBand) => void;
   mode: RecommendationMode;
   onReplace: (slot: RecommendationSlot) => void;
   onRegenerate: () => void;
@@ -858,6 +878,24 @@ function OutfitCard({
           </Pressable>
         ))}
       </View>
+      {temperature ? (
+        <>
+          <Text style={styles.reasonsTitle}>今天气温（默认按月份估计，可改）</Text>
+          <View style={styles.occasionRow}>
+            {TEMP_BANDS.map((band) => (
+              <Pressable
+                key={band}
+                accessibilityRole="button"
+                accessibilityState={{ selected: temperature === band }}
+                onPress={() => onChangeTemperature(band)}
+                style={[styles.chip, temperature === band && styles.chipActive]}
+              >
+                <Text style={[styles.chipLabel, temperature === band && styles.chipLabelActive]}>{TEMP_LABEL[band]}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
       <View style={styles.secondaryActions}>
         <Pressable accessibilityRole="button" onPress={onRegenerate} style={styles.secondaryBtn}>
           <Text style={styles.secondaryBtnLabel}>换一套</Text>

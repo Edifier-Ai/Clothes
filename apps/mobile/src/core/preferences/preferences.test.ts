@@ -32,6 +32,7 @@ describe('本地隐私偏好', () => {
         repeatAvoidance: true,
         feedbackLearning: true,
         heroItem: true,
+        weather: true,
       },
     });
   });
@@ -44,6 +45,7 @@ describe('本地隐私偏好', () => {
       repeatAvoidance: false,
       feedbackLearning: true,
       heroItem: false,
+      weather: true,
     });
     expect((await getAppPreferences()).recommendationFactors).toEqual({
       occasion: true,
@@ -52,6 +54,7 @@ describe('本地隐私偏好', () => {
       repeatAvoidance: false,
       feedbackLearning: true,
       heroItem: false,
+      weather: true,
     });
   });
 
@@ -80,6 +83,7 @@ describe('本地隐私偏好', () => {
         repeatAvoidance: true,
         feedbackLearning: true,
         heroItem: true,
+        weather: true,
       },
     });
   });
@@ -98,6 +102,7 @@ describe('本地隐私偏好', () => {
         repeatAvoidance: true,
         feedbackLearning: true,
         heroItem: true,
+        weather: true,
       },
     });
     unsubscribe();
@@ -119,6 +124,7 @@ describe('本地隐私偏好', () => {
         repeatAvoidance: true,
         feedbackLearning: true,
         heroItem: true,
+        weather: true,
       },
     });
   });
