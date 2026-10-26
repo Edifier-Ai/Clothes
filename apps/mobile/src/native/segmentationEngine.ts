@@ -1,6 +1,7 @@
 /**
  * 可替换抠图引擎接口（TECH_STACK §4：业务层不感知具体模型）。
- * 生产路径唯一引擎为腾讯云数据万象 GoodsMatting（TencentCiEngine）；
+ * 生产路径：默认端侧 u2netp（LocalU2netEngine），用户配置并同意后可改用腾讯云 GoodsMatting（TencentCiEngine），
+ * 选择逻辑见 core/cutout/engineResolver.ts；
  * StubSegmentationEngine 仅限测试，不进入生产路径。
  * 输入/输出走文件路径或二进制 Uint8Array，不走 Base64。
  */

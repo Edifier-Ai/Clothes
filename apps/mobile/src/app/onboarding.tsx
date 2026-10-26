@@ -228,14 +228,14 @@ export default function OnboardingScreen() {
       {step === 'value' && (
         <Card>
           <Text style={styles.title}>三步获得价值</Text>
-          <Text style={styles.body}>① 拍/选真实衣物 ② 明确同意后进行腾讯云抠图 ③ 得到可解释搭配。原图永不覆盖。</Text>
+          <Text style={styles.body}>① 拍/选真实衣物 ② 手机本地自动抠图 ③ 得到可解释搭配。原图永不覆盖。</Text>
           <Primary label="下一步" onPress={advanceIntro} />
         </Card>
       )}
       {step === 'privacy' && (
         <Card>
           <Text style={styles.title}>本地优先 · 隐私</Text>
-          <Text style={styles.body}>无需注册，衣物、造型和记录默认只在设备。只有你明确同意后，衣物照片才会上传腾讯云进行抠图。本演示版数据仅保存在当前设备。</Text>
+          <Text style={styles.body}>无需注册，衣物、造型和记录默认只在设备。抠图默认在手机本地完成；只有你自己配置并明确同意后，衣物照片才会上传腾讯云进行高质量抠图。本演示版数据仅保存在当前设备。</Text>
           <Primary label="本地开始" onPress={advanceIntro} />
         </Card>
       )}

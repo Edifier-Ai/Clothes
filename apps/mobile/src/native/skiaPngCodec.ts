@@ -48,6 +48,46 @@ export function decodePng(bytes: Uint8Array): DecodedPng {
   }
 }
 
+/**
+ * 任意编码图片字节 → 缩放到 w×h 的非预乘 RGBA（端侧抠图模型输入用）。
+ * 在 CPU 表面上线性 + mipmap 采样缩放，避免把整张大图解成 JS 数组。失败抛错。
+ */
+export function decodeResizedRgba(bytes: Uint8Array, w: number, h: number): Uint8Array {
+  const { Skia, ColorType, AlphaType, FilterMode, MipmapMode } = skia();
+  const data = Skia.Data.fromBytes(bytes);
+  let img: SkImageT | null = null;
+  let scaled: SkImageT | null = null;
+  const surface = Skia.Surface.Make(w, h);
+  try {
+    if (!surface) throw new Error('resize failed: cannot create surface');
+    img = Skia.Image.MakeImageFromEncoded(data);
+    if (!img) throw new Error('decode failed: unsupported or corrupt image');
+    surface
+      .getCanvas()
+      .drawImageRectOptions(
+        img,
+        Skia.XYWHRect(0, 0, img.width(), img.height()),
+        Skia.XYWHRect(0, 0, w, h),
+        FilterMode.Linear,
+        MipmapMode.Linear,
+      );
+    scaled = surface.makeImageSnapshot();
+    const pixels = scaled.readPixels(0, 0, {
+      width: w,
+      height: h,
+      colorType: ColorType.RGBA_8888,
+      alphaType: AlphaType.Unpremul,
+    });
+    if (!pixels) throw new Error('resize failed: readPixels returned null');
+    return Uint8Array.from(pixels);
+  } finally {
+    scaled?.dispose();
+    img?.dispose();
+    surface?.dispose();
+    data.dispose();
+  }
+}
+
 /** PNG 字节 → SkImage（画布展示原图用）。Skia v2 useImage 对 file:// 真机不可靠
  * （2026-08-01 真机实测原图空白），改走 JSI 解码。失败抛错。 */
 export function decodeSkImage(bytes: Uint8Array): SkImageT {

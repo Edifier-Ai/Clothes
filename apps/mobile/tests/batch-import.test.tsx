@@ -1,7 +1,7 @@
 /**
  * 批量导入页（batch-import.tsx）组件测试：
- * 未配置 → 配置表单；已配置未同意 → 上传告知，「同意并继续」后才入队；
- * 拒绝上传 → 原图入库；齐全 → 队列流；队列状态文案区分 待配置/断网待重试/失败可重试。
+ * 默认本地抠图，无需配置即可入队；腾讯云为可选：展开配置 → 上传告知 → 同意后切到云端；
+ * 「仅导入原图」不抠图；队列状态文案区分 断网待重试/失败可重试，遗留任务挂载即续跑。
  *
  * expo-secure-store 由 jest.setup.js 全局 mock（内存 Map）→ apiConfig 走真实逻辑；
  * cutoutService / expoDb / expo-image-picker 在本文件 mock。
@@ -21,8 +21,10 @@ const mockEnqueueBatch = jest.fn(async (..._args: unknown[]) => ({ garmentIds: [
 const mockAddOriginalOnly = jest.fn(async (..._args: unknown[]) => 'g1');
 const mockGetSnapshot = jest.fn(async () => SNAP_ZERO);
 const mockCountNetworkPending = jest.fn(async () => 0);
-const mockStartProcessing = jest.fn(async () => 0);
-const mockRetryFailed = jest.fn(async () => 0);
+type MockResult = { processed: number; blockedReason: string | null };
+const OK_RESULT: MockResult = { processed: 0, blockedReason: null };
+const mockStartProcessing = jest.fn(async (): Promise<MockResult> => OK_RESULT);
+const mockRetryFailed = jest.fn(async (): Promise<MockResult> => OK_RESULT);
 const mockListAll = jest.fn(async (..._args: unknown[]) => []);
 const mockCancel = jest.fn(async (..._args: unknown[]) => undefined);
 const mockRouterPush = jest.fn((..._args: unknown[]) => undefined);
@@ -84,6 +86,8 @@ beforeEach(() => {
   mockListAll.mockResolvedValue([]);
   mockRequestCameraPermission.mockResolvedValue({ granted: true });
   mockLaunchCamera.mockResolvedValue({ canceled: true, assets: null });
+  mockStartProcessing.mockResolvedValue(OK_RESULT);
+  mockRetryFailed.mockResolvedValue(OK_RESULT);
 });
 
 async function renderLoaded() {
@@ -91,21 +95,82 @@ async function renderLoaded() {
   await waitFor(() => expect(screen.getByText('批量导入')).toBeOnTheScreen());
 }
 
-describe('batch-import：未配置抠图服务', () => {
-  it('显示配置表单（4 输入框 + 保存按钮），不显示告知区块', async () => {
+const PICK_ONE = {
+  canceled: false,
+  assets: [{ uri: 'file:///a.jpg', mimeType: 'image/jpeg' }],
+} as ImagePicker.ImagePickerResult;
+
+async function openCloudSetup() {
+  await renderLoaded();
+  fireEvent.press(await screen.findByRole('button', { name: '使用腾讯云高质量抠图（可选）' }));
+}
+
+describe('batch-import：默认本地抠图（未配置云端）', () => {
+  it('不需要任何配置即可选图：显示本地模式，云端配置默认收起', async () => {
     await renderLoaded();
-    expect(screen.getByText('配置抠图服务')).toBeOnTheScreen();
+    expect(screen.getByText('抠图方式：手机本地（照片不上传）')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '从相册批量选择' })).toBeEnabled();
+    expect(screen.queryByPlaceholderText('secretId')).toBeNull();
+    expect(screen.queryByText('上传告知')).toBeNull();
+  });
+
+  it('选图 → 入队并开始本地处理', async () => {
+    launchPicker.mockResolvedValue(PICK_ONE);
+    await renderLoaded();
+    fireEvent.press(screen.getByRole('button', { name: '从相册批量选择' }));
+    await waitFor(() => expect(mockEnqueueBatch).toHaveBeenCalledTimes(1));
+    expect(mockEnqueueBatch).toHaveBeenCalledWith(expect.anything(), [{ uri: 'file:///a.jpg', ext: 'jpg' }]);
+    expect(mockStartProcessing).toHaveBeenCalled();
+    expect(await hasUploadConsent()).toBe(false);
+  });
+
+  it('本地模型加载失败 → 不报「已处理」，显示原因并保留 pending 可继续', async () => {
+    launchPicker.mockResolvedValue(PICK_ONE);
+    mockStartProcessing.mockResolvedValue({ processed: 0, blockedReason: '本地抠图模型加载失败：native module missing' });
+    mockGetSnapshot.mockResolvedValue(SNAP_ZERO);
+    await renderLoaded();
+    mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 1, total: 1 });
+    fireEvent.press(screen.getByRole('button', { name: '从相册批量选择' }));
+    await waitFor(() => expect(screen.getByText(/抠图暂时无法进行/)).toBeOnTheScreen());
+    expect(screen.queryByText(/已处理 1 张/)).toBeNull();
+    expect(screen.getByText(/抠图暂停：本地抠图模型加载失败/)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '继续处理' })).toBeOnTheScreen();
+  });
+
+  it('「仅导入原图（不抠图）」→ addOriginalOnly 入库，不入队不抠图', async () => {
+    launchPicker.mockResolvedValue({
+      canceled: false,
+      assets: [
+        { uri: 'file:///a.jpg', mimeType: 'image/jpeg' },
+        { uri: 'file:///b.png', mimeType: 'image/png' },
+      ],
+    } as ImagePicker.ImagePickerResult);
+    await renderLoaded();
+    fireEvent.press(screen.getByRole('button', { name: '仅导入原图（不抠图）' }));
+    await waitFor(() => expect(mockAddOriginalOnly).toHaveBeenCalledTimes(2));
+    expect(mockEnqueueBatch).not.toHaveBeenCalled();
+    expect(mockStartProcessing).not.toHaveBeenCalled();
+  });
+
+  it('遗留 pending 任务挂载即自动续跑（本地模式不再等配置）', async () => {
+    mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 2, total: 2 });
+    await renderLoaded();
+    await waitFor(() => expect(mockStartProcessing).toHaveBeenCalledTimes(1));
+  });
+
+  it('展开可选云端配置：4 输入框 + CAM 提示 + 保存按钮', async () => {
+    await openCloudSetup();
+    expect(screen.getByText('配置腾讯云抠图（可选）')).toBeOnTheScreen();
     expect(screen.getByText(/CAM 子账号密钥/)).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('secretId')).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('secretKey')).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('bucket（BucketName-APPID）')).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('region（如 ap-guangzhou）')).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: '保存配置' })).toBeOnTheScreen();
-    expect(screen.queryByText('上传告知')).toBeNull();
   });
 
   it('字段不全时保存 → 明确缺项提示，不落库', async () => {
-    await renderLoaded();
+    await openCloudSetup();
     fireEvent.changeText(screen.getByPlaceholderText('secretId'), 'AKIDTEST');
     fireEvent.press(screen.getByRole('button', { name: '保存配置' }));
     await waitFor(() => expect(screen.getByText(/请填写完整/)).toBeOnTheScreen());
@@ -114,7 +179,7 @@ describe('batch-import：未配置抠图服务', () => {
   });
 
   it('填全保存 → 写入 SecureStore，随后显示上传告知区块', async () => {
-    await renderLoaded();
+    await openCloudSetup();
     fireEvent.changeText(screen.getByPlaceholderText('secretId'), CONFIG.secretId);
     fireEvent.changeText(screen.getByPlaceholderText('secretKey'), CONFIG.secretKey);
     fireEvent.changeText(screen.getByPlaceholderText('bucket（BucketName-APPID）'), CONFIG.bucket);
@@ -125,13 +190,7 @@ describe('batch-import：未配置抠图服务', () => {
     expect(screen.getByText(/上传至腾讯云数据万象/)).toBeOnTheScreen();
     expect(screen.getAllByText(/App 在处理完成后请求删除 COS 暂存对象/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/云服务处理受腾讯条款约束/).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: '同意并继续' })).toBeOnTheScreen();
-  });
-
-  it('有待处理任务时显示「待配置」文案', async () => {
-    mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 2, total: 2 });
-    await renderLoaded();
-    await waitFor(() => expect(screen.getByText(/待配置/)).toBeOnTheScreen());
+    expect(screen.getByRole('button', { name: '同意并使用云端抠图' })).toBeOnTheScreen();
   });
 
   it('首屏不请求相机权限，只有用户点击拍摄后才请求', async () => {
@@ -143,57 +202,34 @@ describe('batch-import：未配置抠图服务', () => {
   });
 });
 
-describe('batch-import：已配置未同意', () => {
+describe('batch-import：已配置云端但未同意', () => {
   beforeEach(async () => {
     await saveTencentCiConfig(CONFIG);
   });
 
-  it('显示告知区块；「从相册批量选择」不可用（不入队、不开相册）', async () => {
+  it('显示告知区块，但选图仍可用且走本地抠图', async () => {
+    launchPicker.mockResolvedValue(PICK_ONE);
     await renderLoaded();
     await waitFor(() => expect(screen.getByText('上传告知')).toBeOnTheScreen());
-    const pickBtn = screen.getByRole('button', { name: '从相册批量选择' });
-    expect(pickBtn).toBeDisabled();
-    fireEvent.press(pickBtn);
-    expect(launchPicker).not.toHaveBeenCalled();
-    expect(mockEnqueueBatch).not.toHaveBeenCalled();
-  });
-
-  it('「同意并继续」→ consent 持久化，随后选图入队并开始处理', async () => {
-    launchPicker.mockResolvedValue({
-      canceled: false,
-      assets: [{ uri: 'file:///a.jpg', mimeType: 'image/jpeg' }],
-    } as ImagePicker.ImagePickerResult);
-    await renderLoaded();
-    await waitFor(() => expect(screen.getByRole('button', { name: '同意并继续' })).toBeOnTheScreen());
-    fireEvent.press(screen.getByRole('button', { name: '同意并继续' }));
+    expect(screen.getByText('抠图方式：手机本地（照片不上传）')).toBeOnTheScreen();
+    fireEvent.press(screen.getByRole('button', { name: '从相册批量选择' }));
     await waitFor(() => expect(mockEnqueueBatch).toHaveBeenCalledTimes(1));
-    expect(await hasUploadConsent()).toBe(true);
-    expect(launchPicker).toHaveBeenCalledTimes(1);
-    expect(mockEnqueueBatch).toHaveBeenCalledWith(expect.anything(), [{ uri: 'file:///a.jpg', ext: 'jpg' }]);
-    expect(mockStartProcessing).toHaveBeenCalled();
-  });
-
-  it('「暂不上传，仅原图入库」→ addOriginalOnly 入库，不入队不抠图', async () => {
-    launchPicker.mockResolvedValue({
-      canceled: false,
-      assets: [
-        { uri: 'file:///a.jpg', mimeType: 'image/jpeg' },
-        { uri: 'file:///b.png', mimeType: 'image/png' },
-      ],
-    } as ImagePicker.ImagePickerResult);
-    await renderLoaded();
-    await waitFor(() => expect(screen.getByRole('button', { name: '暂不上传，仅原图入库' })).toBeOnTheScreen());
-    fireEvent.press(screen.getByRole('button', { name: '暂不上传，仅原图入库' }));
-    await waitFor(() => expect(mockAddOriginalOnly).toHaveBeenCalledTimes(2));
-    expect(mockEnqueueBatch).not.toHaveBeenCalled();
-    expect(mockStartProcessing).not.toHaveBeenCalled();
     expect(await hasUploadConsent()).toBe(false);
   });
 
-  it('有待处理任务时显示「待同意」文案', async () => {
-    mockGetSnapshot.mockResolvedValue({ ...SNAP_ZERO, pending: 3, total: 3 });
+  it('「同意并使用云端抠图」→ consent 持久化，模式切到云端', async () => {
     await renderLoaded();
-    await waitFor(() => expect(screen.getByText(/待同意/)).toBeOnTheScreen());
+    fireEvent.press(await screen.findByRole('button', { name: '同意并使用云端抠图' }));
+    await waitFor(() => expect(screen.getByText('抠图方式：腾讯云高质量（照片会上传处理）')).toBeOnTheScreen());
+    expect(await hasUploadConsent()).toBe(true);
+    expect(screen.queryByText('上传告知')).toBeNull();
+  });
+
+  it('「继续用本地抠图」→ 收起告知，不授权上传', async () => {
+    await renderLoaded();
+    fireEvent.press(await screen.findByRole('button', { name: '继续用本地抠图' }));
+    await waitFor(() => expect(screen.queryByText('上传告知')).toBeNull());
+    expect(await hasUploadConsent()).toBe(false);
   });
 });
 

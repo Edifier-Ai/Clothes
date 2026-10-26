@@ -48,7 +48,10 @@ type App = Awaited<ReturnType<typeof openAppDb>>;
 const EMPTY_FORM: TencentCiConfig = { secretId: '', secretKey: '', bucket: '', region: '' };
 const captureCamera = createCameraCapture(ImagePicker);
 
-/** 批量抠图导入 IMP-02：多选→持久队列→顺序处理→进度→失败重试/跳过。抠图走腾讯云数据万象（需配置+告知确认）。 */
+/**
+ * 批量抠图导入 IMP-02：多选→持久队列→顺序处理→进度→失败重试/跳过。
+ * 默认在手机本地抠图（u2netp，照片不上传）；腾讯云数据万象为可选的高质量模式，需配置凭证并确认上传告知。
+ */
 export default function BatchImportScreen() {
   const router = useRouter();
   const [snap, setSnap] = useState<QueueSnapshot | null>(null);
@@ -62,8 +65,15 @@ export default function BatchImportScreen() {
   /** null=加载中；配置四字段是否齐全 */
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [consent, setConsent] = useState(false);
+  /** 可选云端区块：未配置时默认收起，避免新用户以为必须填密钥 */
+  const [showCloudSetup, setShowCloudSetup] = useState(false);
+  /** 已配置但选择「继续用本地抠图」后不再显示上传告知 */
+  const [consentDismissed, setConsentDismissed] = useState(false);
   const [form, setForm] = useState<TencentCiConfig>(EMPTY_FORM);
   const [formError, setFormError] = useState('');
+  const cloudReady = configured === true && consent;
+  /** 抠图引擎不可用原因（如本地模型加载失败）；任务保持 pending，修复后可「继续处理」。 */
+  const [engineIssue, setEngineIssue] = useState<string | null>(null);
   const appRef = useRef<App | null>(null);
 
   const refreshQueue = useCallback(async (app: App) => {
@@ -72,9 +82,12 @@ export default function BatchImportScreen() {
     setItems(await listAll(app.drizzleDb));
   }, []);
 
+  /** 跑队列；返回引擎不可用原因（null = 正常处理），并同步到页面提示。 */
   const runQueue = useCallback(async (app: App) => {
-    await startProcessing(app, (s) => setSnap(s));
+    const { blockedReason } = await startProcessing(app, (s) => setSnap(s));
+    setEngineIssue(blockedReason);
     await refreshQueue(app);
+    return blockedReason;
   }, [refreshQueue]);
 
   useEffect(() => {
@@ -90,9 +103,9 @@ export default function BatchImportScreen() {
       setConfigured(ok);
       const consented = ok ? await hasUploadConsent() : false;
       setConsent(consented);
-      // 中断自动续跑：凭证+同意齐全且有 pending/running 任务（杀进程/断网中断）时
-      // 从已提交位置继续；startProcessing 内 recover 会把 running 安全重置为 pending。
-      if (ok && consented && (s0.pending > 0 || s0.running > 0)) {
+      // 中断自动续跑：有 pending/running 任务（杀进程/断网中断）时从已提交位置继续；
+      // startProcessing 内 recover 会把 running 安全重置为 pending。
+      if (s0.pending > 0 || s0.running > 0) {
         setBusy(true);
         setStatus('恢复中断的任务，继续处理中…');
         await runQueue(app);
@@ -117,7 +130,8 @@ export default function BatchImportScreen() {
     setFormError('');
     setConfigured(true);
     setConsent(false); // 新凭证需重新确认上传告知
-    setStatus('配置已保存（仅存本机）。首次抠图前需确认上传告知。');
+    setConsentDismissed(false);
+    setStatus('配置已保存（仅存本机）。确认上传告知后才会改用云端抠图，在此之前仍在手机本地处理。');
   };
 
   const clearConfig = async () => {
@@ -125,7 +139,8 @@ export default function BatchImportScreen() {
     setConfigured(false);
     setConsent(false);
     setForm(EMPTY_FORM);
-    setStatus('已清除本机保存的抠图服务配置。');
+    setShowCloudSetup(false);
+    setStatus('已清除腾讯云配置，之后在手机本地抠图。');
   };
 
   const pickImages = async () => {
@@ -143,19 +158,16 @@ export default function BatchImportScreen() {
     if (!app || picked.length === 0) return;
     setBusy(true);
     try {
-      if (configured === true && consent) {
-        setStatus(`${source}照片入队中…`);
-        await enqueueBatch(app, picked);
-        await refreshQueue(app);
-        setStatus('抠图处理中…');
-        await runQueue(app);
-        setStatus(`已处理 ${picked.length} 张，成功项请逐件审核。`);
-      } else {
-        setStatus(`${source}照片原图入库中…`);
-        for (const p of picked) await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
-        setStatus(`已将 ${picked.length} 张原图安全入库；未授权云抠图，因此没有上传。`);
-        await refreshQueue(app);
-      }
+      setStatus(`${source}照片入队中…`);
+      await enqueueBatch(app, picked);
+      await refreshQueue(app);
+      setStatus(cloudReady ? '云端抠图处理中…' : '手机本地抠图中…');
+      const blocked = await runQueue(app);
+      setStatus(
+        blocked
+          ? `已保存 ${picked.length} 张，但抠图暂时无法进行（${blocked}）。照片不会丢，可稍后点「继续处理」。`
+          : `已处理 ${picked.length} 张，成功项请逐件审核。`,
+      );
     } catch (error) {
       setStatus(`导入失败：${error instanceof Error ? error.message : String(error)}。原图不会被覆盖。`);
     } finally {
@@ -176,46 +188,21 @@ export default function BatchImportScreen() {
     await importPicked([result.picked], '相机');
   };
 
-  /** 已配置+已同意：多选 → 入队 → 顺序云抠图。 */
+  /** 多选 → 入队 → 顺序抠图（本地，或已授权的云端）。 */
   const pickAndEnqueue = async () => {
-    if (!configured) {
-      setStatus('请先配置抠图服务（上方四个字段）。');
-      return;
-    }
-    if (!consent) {
-      setStatus('请先阅读并确认上方的上传告知，确认后才会入队抠图。');
-      return;
-    }
     const picked = await pickImages();
     if (!picked) return;
     await importPicked(picked, '相册');
   };
 
-  /** 同意告知并继续：持久化确认 → 选图 → 入队 → 处理（含此前积压的 pending）。 */
-  const agreeAndContinue = async () => {
-    const app = appRef.current;
-    if (!app) return;
+  /** 同意上传告知：之后的抠图改走腾讯云（含此前积压的 pending 任务）。 */
+  const agreeCloud = async () => {
     await grantUploadConsent();
     setConsent(true);
-    const picked = await pickImages();
-    if (picked) {
-      setBusy(true);
-      try {
-        setStatus('入队中…');
-        await enqueueBatch(app, picked);
-        await refreshQueue(app);
-        setStatus('处理中…');
-        await runQueue(app);
-        setStatus('完成，成功项请逐件审核。');
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    await refreshQueue(app);
+    setStatus('已同意，之后的抠图会上传腾讯云处理。');
   };
 
-  /** 拒绝上传：不抠图，衣物以原图入库（蒙版后续可补）。 */
+  /** 不抠图，衣物以原图入库（蒙版后续可补）。 */
   const importOriginalOnly = async () => {
     const app = appRef.current;
     if (!app) return;
@@ -227,7 +214,7 @@ export default function BatchImportScreen() {
       for (const p of picked) {
         await addOriginalOnly(app, { uri: p.uri, ext: p.ext });
       }
-      setStatus(`已原图入库 ${picked.length} 件；没有上传，可在确认告知后补抠图。`);
+      setStatus(`已原图入库 ${picked.length} 件；没有抠图，衣物以原图展示。`);
     } catch (error) {
       setStatus(`原图导入失败：${error instanceof Error ? error.message : String(error)}。`);
     } finally {
@@ -240,9 +227,10 @@ export default function BatchImportScreen() {
     if (!app) return;
     setBusy(true);
     setStatus('重试处理中…');
-    await retryFailed(app, (s) => setSnap(s));
+    const { blockedReason } = await retryFailed(app, (s) => setSnap(s));
+    setEngineIssue(blockedReason);
     await refreshQueue(app);
-    setStatus('完成');
+    setStatus(blockedReason ? `抠图暂时无法进行：${blockedReason}` : '完成');
     setBusy(false);
   };
 
@@ -251,8 +239,8 @@ export default function BatchImportScreen() {
     if (!app) return;
     setBusy(true);
     setStatus('继续处理中…');
-    await runQueue(app);
-    setStatus('完成');
+    const blocked = await runQueue(app);
+    setStatus(blocked ? `抠图暂时无法进行：${blocked}` : '完成');
     setBusy(false);
   };
 
@@ -288,18 +276,68 @@ export default function BatchImportScreen() {
     setStatus(next ? '已接受，继续审核下一件。' : '本批成功项已审核完，可返回衣橱继续整理。');
   };
 
-  const ready = configured === true && consent;
   const reviewItem = reviewJobId ? items.find((item) => item.job.id === reviewJobId) ?? null : null;
   const reviewNextId = reviewItem ? nextSucceededGarmentId(items, reviewItem.job.id, reviewedJobIds) : undefined;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>批量导入</Text>
-      <Text style={styles.sub}>选择多张衣物照片，云端抠图（腾讯云数据万象）；中断后可从此处继续。</Text>
+      <Text style={styles.sub}>选择多张衣物照片，自动抠出衣物；中断后可从此处继续。</Text>
 
-      {configured === false ? (
+      <View style={styles.configLine}>
+        <Text style={styles.line}>
+          {cloudReady ? '抠图方式：腾讯云高质量（照片会上传处理）' : '抠图方式：手机本地（照片不上传）'}
+        </Text>
+      </View>
+
+      <Pressable accessibilityRole="button" onPress={pickAndEnqueue} disabled={busy} style={[styles.btn, busy && styles.btnDisabled]}>
+        <Text style={styles.btnLabel}>{busy ? '处理中…' : '从相册批量选择'}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={importOriginalOnly} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
+        <Text style={styles.btnGhostLabel}>仅导入原图（不抠图）</Text>
+      </Pressable>
+
+      <View style={styles.captureRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="拍一件"
+          onPress={() => void takePhoto(false)}
+          disabled={busy}
+          style={[styles.btnGhost, styles.captureButton, busy && styles.btnDisabled]}
+        >
+          <Text style={styles.btnGhostLabel}>拍一件</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={cameraSeries ? '继续拍一件' : '开始连续拍摄'}
+          onPress={() => void takePhoto(true)}
+          disabled={busy}
+          style={[styles.btnGhost, styles.captureButton, cameraSeries && styles.selectedButton, busy && styles.btnDisabled]}
+        >
+          <Text style={[styles.btnGhostLabel, cameraSeries && styles.selectedButtonLabel]}>
+            {cameraSeries ? '继续拍一件' : '连续拍摄'}
+          </Text>
+        </Pressable>
+      </View>
+      {cameraSeries ? (
+        <Pressable accessibilityRole="button" onPress={() => setCameraSeries(false)} style={styles.finishSeries}>
+          <Text style={styles.finishSeriesLabel}>结束连续拍摄</Text>
+        </Pressable>
+      ) : null}
+      <Text style={styles.permissionHint}>相机权限只会在你点击拍摄后请求；拒绝后仍可使用相册。</Text>
+
+      {configured === false && !showCloudSetup ? (
+        <Pressable accessibilityRole="button" onPress={() => setShowCloudSetup(true)} style={styles.btnGhost}>
+          <Text style={styles.btnGhostLabel}>使用腾讯云高质量抠图（可选）</Text>
+        </Pressable>
+      ) : null}
+
+      {configured === false && showCloudSetup ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>配置抠图服务</Text>
+          <Text style={styles.cardTitle}>配置腾讯云抠图（可选）</Text>
+          <Text style={styles.cardHint}>
+            不配置也能用：默认在手机本地抠图。腾讯云对复杂背景效果更好，需要你自己的账号，首 1000 次免费，之后约 1 分钱一张。
+          </Text>
           <Text style={styles.cardHint}>填入腾讯云数据万象凭证，仅保存在本机安全存储。</Text>
           <Text style={styles.cardHint}>
             建议使用 CAM 子账号密钥，只授权该存储桶的上传、下载、删除对象权限，不要填写主账号密钥。
@@ -345,92 +383,54 @@ export default function BatchImportScreen() {
           <Pressable accessibilityRole="button" onPress={saveConfig} style={styles.btn}>
             <Text style={styles.btnLabel}>保存配置</Text>
           </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setShowCloudSetup(false)} style={styles.btnGhost}>
+            <Text style={styles.btnGhostLabel}>收起，继续用本地抠图</Text>
+          </Pressable>
         </View>
       ) : null}
 
       {configured === true ? (
         <View style={styles.configLine}>
-          <Text style={styles.line}>抠图服务：已配置（key 仅存本机）</Text>
+          <Text style={styles.line}>腾讯云抠图：已配置（key 仅存本机）</Text>
           <Pressable accessibilityRole="button" onPress={clearConfig} style={styles.clearBtn}>
             <Text style={styles.clearBtnLabel}>清除配置</Text>
           </Pressable>
         </View>
       ) : null}
 
-      {configured === true && !consent ? (
+      {configured === true && !consent && !consentDismissed ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>上传告知</Text>
           <Text style={styles.cardHint}>
-            抠图会把选中的照片上传至腾讯云数据万象处理；App 在处理完成后请求删除 COS 暂存对象，
-            云服务处理受腾讯条款约束；凭证只保存在本机。确认后才会入队抠图。
+            改用云端后，抠图会把选中的照片上传至腾讯云数据万象处理；App 在处理完成后请求删除 COS 暂存对象，
+            云服务处理受腾讯条款约束；凭证只保存在本机。不同意则继续在手机本地抠图。
           </Text>
-          <Pressable accessibilityRole="button" onPress={agreeAndContinue} disabled={busy} style={[styles.btn, busy && styles.btnDisabled]}>
-            <Text style={styles.btnLabel}>同意并继续</Text>
+          <Pressable accessibilityRole="button" onPress={agreeCloud} disabled={busy} style={[styles.btn, busy && styles.btnDisabled]}>
+            <Text style={styles.btnLabel}>同意并使用云端抠图</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={importOriginalOnly} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
-            <Text style={styles.btnGhostLabel}>暂不上传，仅原图入库</Text>
+          <Pressable accessibilityRole="button" onPress={() => setConsentDismissed(true)} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
+            <Text style={styles.btnGhostLabel}>继续用本地抠图</Text>
           </Pressable>
         </View>
       ) : null}
-
-      <Pressable accessibilityRole="button" onPress={pickAndEnqueue} disabled={busy || !ready} style={[styles.btn, (busy || !ready) && styles.btnDisabled]}>
-        <Text style={styles.btnLabel}>{busy ? '处理中…' : '从相册批量选择'}</Text>
-      </Pressable>
-      {configured === false ? (
-        <Pressable accessibilityRole="button" onPress={importOriginalOnly} disabled={busy} style={[styles.btnGhost, busy && styles.btnDisabled]}>
-          <Text style={styles.btnGhostLabel}>不配置服务，仅导入原图</Text>
-        </Pressable>
-      ) : null}
-
-      <View style={styles.captureRow}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="拍一件"
-          onPress={() => void takePhoto(false)}
-          disabled={busy}
-          style={[styles.btnGhost, styles.captureButton, busy && styles.btnDisabled]}
-        >
-          <Text style={styles.btnGhostLabel}>拍一件</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={cameraSeries ? '继续拍一件' : '开始连续拍摄'}
-          onPress={() => void takePhoto(true)}
-          disabled={busy}
-          style={[styles.btnGhost, styles.captureButton, cameraSeries && styles.selectedButton, busy && styles.btnDisabled]}
-        >
-          <Text style={[styles.btnGhostLabel, cameraSeries && styles.selectedButtonLabel]}>
-            {cameraSeries ? '继续拍一件' : '连续拍摄'}
-          </Text>
-        </Pressable>
-      </View>
-      {cameraSeries ? (
-        <Pressable accessibilityRole="button" onPress={() => setCameraSeries(false)} style={styles.finishSeries}>
-          <Text style={styles.finishSeriesLabel}>结束连续拍摄</Text>
-        </Pressable>
-      ) : null}
-      <Text style={styles.permissionHint}>相机权限只会在你点击拍摄后请求；拒绝后仍可使用相册。</Text>
 
       {snap ? (
         <View style={styles.progress}>
           <Text style={styles.cardTitle}>处理进度</Text>
           <Text style={styles.line}>待处理 {snap.pending} · 处理中 {snap.running} · 待审核 {snap.succeeded}</Text>
           <Text style={styles.line}>失败 {snap.failed} · 已跳过 {snap.cancelled} · 共 {snap.total}</Text>
-          {snap.pending > 0 && configured === false ? (
-            <Text style={styles.hint}>待配置：保存抠图服务配置并确认告知后，这些任务自动可续跑。</Text>
+          {engineIssue && snap.pending > 0 ? (
+            <Text style={styles.error}>抠图暂停：{engineIssue}。{snap.pending} 张已保存，可点「继续处理」重试，或先「仅导入原图」。</Text>
           ) : null}
-          {snap.pending > 0 && configured === true && !consent ? (
-            <Text style={styles.hint}>待同意：确认上传告知后继续处理 {snap.pending} 张。</Text>
-          ) : null}
-          {networkPending > 0 && ready ? (
+          {networkPending > 0 ? (
             <Text style={styles.hint}>断网待重试：{networkPending} 张因网络中断暂停，联网后点「继续处理」。</Text>
           ) : null}
           {snap.failed > 0 ? (
-            <Text style={styles.hint}>失败可重试：{snap.failed} 张抠图报错（凭证无效/额度/图片异常），可重试或跳过。</Text>
+            <Text style={styles.hint}>失败可重试：{snap.failed} 张抠图报错（图片异常、模型加载失败或云端凭证/额度问题），可重试或跳过。</Text>
           ) : null}
           {busy ? <ActivityIndicator style={styles.spinner} /> : null}
           {status ? <Text style={styles.status}>{status}</Text> : null}
-          {((snap.pending ?? 0) > 0 || networkPending > 0) && ready && !busy ? (
+          {((snap.pending ?? 0) > 0 || networkPending > 0) && !busy ? (
             <Pressable accessibilityRole="button" onPress={resume} style={styles.retry}>
               <Text style={styles.btnLabel}>继续处理</Text>
             </Pressable>
@@ -536,7 +536,7 @@ export default function BatchImportScreen() {
       ) : null}
 
       <Text style={styles.note}>
-        说明：抠图使用腾讯云数据万象 GoodsMatting；App 在处理完成后请求删除 COS 暂存对象，云服务处理受腾讯条款约束。
+        说明：默认在手机本地抠图，照片不离开设备；只有配置腾讯云并同意上传告知后才改用云端。
         失败可重试或跳过，不阻塞衣物入库；杀进程后重启，已提交任务不重做，剩余任务恢复。
       </Text>
     </ScrollView>

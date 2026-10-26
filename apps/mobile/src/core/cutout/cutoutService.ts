@@ -177,7 +177,16 @@ export async function addOriginalOnly(
  * 引擎经 resolveCutoutEngine 选择：凭证+上传告知齐全 → TencentCiEngine；
  * 否则引擎不可用，任务保持 pending（不标 failed、不伪造蒙版）。
  */
-export async function startProcessing(app: AppDb, onProgress?: (s: QueueSnapshot) => void): Promise<number> {
+export interface ProcessingResult {
+  processed: number;
+  /** 引擎不可用（如本地模型加载失败）时的原因；此时任务保持 pending，不应向用户报告「已处理」。 */
+  blockedReason: string | null;
+}
+
+export async function startProcessing(
+  app: AppDb,
+  onProgress?: (s: QueueSnapshot) => void,
+): Promise<ProcessingResult> {
   const io = makeDeviceIO(rootAbs());
   const { engine } = await resolveCutoutEngine({ readPixels: devicePixelReader });
   await recover({ db: app.drizzleDb, engine, io, extForJob: () => 'png' });
@@ -187,13 +196,17 @@ export async function startProcessing(app: AppDb, onProgress?: (s: QueueSnapshot
         onProgress(s);
       }
     : undefined;
-  const n = await drain({ db: app.drizzleDb, engine, io, extForJob: () => 'png', onProgress: wrapped });
+  const processed = await drain({ db: app.drizzleDb, engine, io, extForJob: () => 'png', onProgress: wrapped });
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
-  return n;
+  const blockedReason = engine.available ? null : (engine.unavailableReason ?? '抠图引擎暂不可用');
+  return { processed, blockedReason };
 }
 
 /** 手动重试失败项：failed → pending（重置重试预算）后续跑队列。 */
-export async function retryFailed(app: AppDb, onProgress?: (s: QueueSnapshot) => void): Promise<number> {
+export async function retryFailed(
+  app: AppDb,
+  onProgress?: (s: QueueSnapshot) => void,
+): Promise<ProcessingResult> {
   await requeueFailed(app.drizzleDb, Date.now());
   await writeMirror(rootAbs(), app.db, app.drizzleDb, Date.now());
   return startProcessing(app, onProgress);

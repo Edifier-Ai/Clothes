@@ -88,12 +88,12 @@ it('欢迎页可直接准备完整演示数据，并在持久完成态后进入�
   expect(mockReplace).toHaveBeenCalledWith('/');
 });
 
-it('隐私页只承诺本地优先，并如实说明腾讯云明确同意与演示数据边界', async () => {
+it('隐私页只承诺本地优先，本地抠图为默认，并如实说明腾讯云明确同意与演示数据边界', async () => {
   mockLoadOnboardState.mockResolvedValue(stateAt('privacy'));
   render(<OnboardingScreen />);
 
   await waitFor(() => expect(screen.getByText('本地优先 · 隐私')).toBeOnTheScreen());
-  expect(screen.getByText(/只有你明确同意后.*上传腾讯云.*抠图/)).toBeOnTheScreen();
+  expect(screen.getByText(/抠图默认在手机本地完成.*明确同意后.*上传腾讯云/)).toBeOnTheScreen();
   expect(screen.getByText(/本演示版数据仅保存在当前设备/)).toBeOnTheScreen();
   expect(screen.queryByText(/导出|备份|恢复/)).toBeNull();
   expect(screen.queryByText(/可随时完整导出/)).toBeNull();

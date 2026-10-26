@@ -8,6 +8,8 @@ const monorepoRoot = path.resolve(projectRoot, '../..');
 const config = getDefaultConfig(projectRoot);
 
 config.watchFolders = [monorepoRoot];
+// 端侧抠图模型（assets/models/*.onnx）作为静态资源随包分发，由 expo-asset 解包后交给 ONNX Runtime。
+config.resolver.assetExts.push('onnx');
 config.resolver.disableHierarchicalLookup = true;
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
